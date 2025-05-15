@@ -221,6 +221,7 @@ class ProbesDict:
                       enforce_permutations: bool = False,
                       rng: Optional[np.random.RandomState] = None) -> Tuple[Trajectory, Spec]:
         inputs, outputs, hints = self.split_stages()
+        num_steps_hint = hints[0].data.shape[0]
         trajectory = {}
         spec = {}
 
@@ -232,12 +233,12 @@ class ProbesDict:
             inputs.append(DataPoint(name='pred_h', location=pred_h.location, type_=pred_h.type_, data=pred_h_data))
 
         for features, stage in zip((inputs, outputs, hints), (Stage.INPUT, Stage.OUTPUT, Stage.HINT)):
-            trajectory[stage] = {}
+            trajectory[stage] = ({}, num_steps_hint if stage == Stage.HINT else 0)        # stage -> (name -> array, num_steps) 
             features = preprocess_pointer_or_permutations(features, enforce_permutations)
             for dp in features:                   
-                trajectory[stage][dp.name] = dp.data
+                trajectory[stage][0][dp.name] = dp.data
                 if dp.name == 'pos' and randomize_pos:
-                    trajectory[stage][dp.name] = randomize_pos_data(dp.data, rng)
+                    trajectory[stage][0][dp.name] = randomize_pos_data(dp.data, rng)
                 meta = {}
                 if dp.type_ == Type.CATEGORICAL:
                    meta = {'num_classes': dp.data.shape[-1]}

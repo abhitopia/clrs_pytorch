@@ -1,17 +1,17 @@
 from collections import defaultdict
-from functools import partial
 import itertools
 from pathlib import Path
 import pickle
 import random
 from typing import Dict, List, Optional, Union
 import numpy as np
-from torch.utils.data import Dataset, DataLoader, Sampler, ConcatDataset
+from torch.utils.data import Dataset, DataLoader, Sampler
 import torch
-
-from .specs import Stage, Algorithms, Spec
+from .specs import Stage, Algorithms, Spec, Type
 from .algorithm import Algorithm, Trajectory
-from .utils import all_lists_equal, cycle_flatten_list_of_lists
+from .utils import all_lists_equal
+
+
 
 def load_algo_trajectories(algo: Algorithm, num_samples: int, cache_dir: Union[str, Path] = None) -> List[Trajectory]:
     if cache_dir is not None:
@@ -32,49 +32,113 @@ def load_algo_trajectories(algo: Algorithm, num_samples: int, cache_dir: Union[s
     return trajectories
 
 
+def hint_steps(trajectory: Trajectory) -> int:
+    """
+    To be used with a "non-batched" trajectory. Must have a batch size of 1.
+    Returns the number of hint steps in the trajectory.
+    """
+    time_dims = [v.shape[0] for v in trajectory[Stage.HINT][0].values()]
+    batch_dims = [v.shape[1] for v in trajectory[Stage.HINT][0].values()]
+    assert all_lists_equal(time_dims), "All hint steps must be the same"
+    assert all(bd == 1 for bd in batch_dims), "Batch size of hint must be 1"
+    assert trajectory[Stage.INPUT][1] == 0, "Input must have 0 hint steps"
+    assert trajectory[Stage.OUTPUT][1] == 0, "Output must have 0 hint steps"
+    assert time_dims[0] == trajectory[Stage.HINT][1], "Hints steps don't match"
+    return time_dims[0]
+
+
+def num_nodes(trajectory: Trajectory) -> int:
+    """
+    To be used with a "non-batched" trajectory. Must have a batch size of 1.
+    Returns the number of nodes in the trajectory.
+    """
+    batch_dims = [] 
+    time_dims = []
+    node_dims = [] 
+    
+    for stage in trajectory.keys():
+        for _, value in trajectory[stage][0].items():
+            if stage == Stage.HINT:
+                batch_dims.append(value.shape[1])
+                time_dims.append(value.shape[0])
+                if value.ndim > 3:  # It could be that the last dimension is number of classes, so we skip any feature with less than 4 dimensions to estimate the number of nodes
+                    node_dims.append(value.shape[2]) # The first node after the time and batch dimensions
+            else:
+                batch_dims.append(value.shape[0])
+                if value.ndim > 2:  # It could be that the last dimension is number of classes, so we skip any feature with less than 3 dimensions to estimate the number of nodes
+                    node_dims.append(value.shape[1]) # The first node after the time and batch dimensions
+    
+    assert all_lists_equal(batch_dims), "All batch dimensions must be the same"
+    assert all_lists_equal(time_dims), "All time dimensions must be the same"
+    assert all_lists_equal(node_dims), "All node dimensions must be the same"
+    node_dim = node_dims[0]
+    assert node_dim > 0, "Number of nodes must be greater than 0"
+    return node_dim
+
+
 def max_hint_steps(trajectories: List[Trajectory]) -> int:
-    max_steps = 0
-    for trajectory in trajectories:
-        for value in trajectory[Stage.HINT].values():
-            assert value.shape[1] == 1, "Batch size of hint must be 1"
-            if value.shape[0] > max_steps:
-                max_steps = value.shape[0]
-    return max_steps
+    return max(trajectory[Stage.HINT][1] for trajectory in trajectories)
 
+def max_num_nodes(trajectories: List[Trajectory]) -> int:
+    return max(num_nodes(trajectory) for trajectory in trajectories)
 
-def batch_trajectories(trajectories: List[Trajectory], min_hint_steps: int = 0, device: Optional[torch.device]=torch.device('cpu')) -> Trajectory:
+def batch_trajectories(spec: Spec, trajectories: List[Trajectory], min_hint_steps: int = 0, min_num_nodes: int = 0, device: Optional[torch.device]=torch.device('cpu')) -> Trajectory:
     """
     Batches trajectories into a single trajectory. If device is None, numpy arrays are returned.
     Otherwise, torch tensors are returned on the specified device.
     If min_hint_steps if less than the maximum hint steps in the batch, the hint steps are padded to the maximum hint steps in the batch.
     Otherwise, the hint steps are padded to the min_hint_steps.
     """
-    batch_trajectory = {Stage.INPUT: {}, Stage.OUTPUT: {}, Stage.HINT: {}}
+    batch_trajectory = {Stage.INPUT: ({}, 0), Stage.OUTPUT: ({}, 0), Stage.HINT: ({}, 0)}
     padded_hint_steps = max(min_hint_steps, max_hint_steps(trajectories))
-    apply_pad = lambda d: np.pad(d, [(0, padded_hint_steps - d.shape[0])] + [(0, 0)]*(d.ndim-1), mode='constant', constant_values=0)
-    steps = np.array([max_hint_steps([trajectory]) for trajectory in trajectories])
-    if device is not None:
-        steps = torch.from_numpy(steps).long().to(device)
+    padded_num_nodes = max(min_num_nodes, max_num_nodes(trajectories))
+
+    def apply_padding(name, data, padded_hint_steps, padded_num_nodes):
+        stage, _, type_, metadata = spec[name]
+        dim_paddings = []
+        if stage == Stage.HINT:
+            # data = apply_pad(data)
+            dim_paddings.append((0, padded_hint_steps - data.shape[0]))  # For the time dimension
+        dim_paddings.append((0, 0))                                      # For the batch dimension
+
+        # The remaining dimensions for hint remove time and batch dimensions, while for others there is no batch dimension
+        offset = len(dim_paddings)
+        remaining_dims = data.ndim - offset
+
+        for dim in range(remaining_dims):
+            if dim == remaining_dims - 1 and type_ == Type.CATEGORICAL:
+                assert metadata['num_classes'] == data.shape[-1], "Number of classes does not match the number of classes in the metadata"
+                dim_paddings.append((0, 0))  # For categorical feature, last dimension is the number of classes
+            else:
+                dim_paddings.append((0, padded_num_nodes - data.shape[dim + offset]))
+
+        data = np.pad(data, dim_paddings, mode='constant', constant_values=0)
+        return data
 
     for stage in Stage:
         for trajectory in trajectories:
-            for key, value in trajectory[stage].items():
-                if key not in batch_trajectory[stage]:
-                    batch_trajectory[stage][key] = []
-                
-                if stage == Stage.HINT:
-                    value = apply_pad(value)
+            for key, value in trajectory[stage][0].items():
+                assert isinstance(value, np.ndarray), "Value must be a numpy array" # At this point, the value is a numpy array
+                if key not in batch_trajectory[stage][0]:
+                    batch_trajectory[stage][0][key] = []
+                value = apply_padding(key, value, padded_hint_steps, padded_num_nodes)
+                batch_trajectory[stage][0][key].append(value)
 
-                batch_trajectory[stage][key].append(value)
-
-        for key, value in batch_trajectory[stage].items():
+        for key, value in batch_trajectory[stage][0].items():
             concat_dim = 1 if stage == Stage.HINT else 0
-            batch_trajectory[stage][key] = np.concatenate(value, axis=concat_dim)
+            batch_trajectory[stage][0][key] = np.concatenate(value, axis=concat_dim)
 
             if device is not None:
-                batch_trajectory[stage][key] = torch.from_numpy(batch_trajectory[stage][key]).float().to(device)
+                batch_trajectory[stage][0][key] = torch.from_numpy(batch_trajectory[stage][0][key]).float().to(device)
 
-    return batch_trajectory, steps
+    steps = [t[Stage.HINT][1] for t in trajectories]
+    assert all(isinstance(s, int) for s in steps), "All steps must be an integer" # At this point, the steps are integers
+    if device is not None:
+        steps = torch.from_numpy(np.array(steps)).long().to(device)
+    else:
+        steps = steps[0] if len(steps) == 1 else steps   # In the case of a single trajectory and not converted to tensor
+    batch_trajectory[Stage.HINT] = (batch_trajectory[Stage.HINT][0], steps)
+    return batch_trajectory
 
 
 class AlgoTrajectoryDataset(Dataset):
@@ -83,17 +147,19 @@ class AlgoTrajectoryDataset(Dataset):
                 num_samples: int, 
                 cache_dir: Union[str, Path] = None,
                 generate_on_the_fly: bool = False,
-                uniform_hint_steps: bool = True,
-                **algo_kwargs):
+                static_batch_size: bool = True,
+                algo_kwargs: Optional[Dict] = None):
         super().__init__()
-        assert "length" not in algo_kwargs, "length must be specified in trajectory_sizes"
-        self.algorithm = Algorithm(algo, length=trajectory_size, **algo_kwargs)
+        assert algo_kwargs is None or "length" not in algo_kwargs, "length must be specified in trajectory_sizes"
+
+        self.algorithm = Algorithm(algo, length=trajectory_size, **algo_kwargs if algo_kwargs is not None else {})
         self.cache_dir = cache_dir
         self.trajectories: List[Trajectory] = None
-        self._min_hint_steps = None
+        self._max_hint_steps = None
+        self._num_nodes = None
         self.num_samples = num_samples
         self.generate_on_the_fly = generate_on_the_fly
-        self.uniform_hint_steps = uniform_hint_steps
+        self.static_batch_size = static_batch_size
     @property
     def spec(self) -> Spec:
         return self.algorithm.spec
@@ -103,95 +169,86 @@ class AlgoTrajectoryDataset(Dataset):
         return self.algorithm.name
     
     @property
-    def min_hint_steps(self) -> int:
-        if self._min_hint_steps is None:
+    def max_hint_steps(self) -> int:
+        if self._max_hint_steps is None:
             self._maybe_load_data()
-        return self._min_hint_steps
+        return self._max_hint_steps
+    
+    @property
+    def num_nodes(self) -> int:
+        if self._num_nodes is None:
+            self._maybe_load_data()
+        return self._num_nodes
 
     def _maybe_load_data(self):
         if self.trajectories is None:
             self.trajectories = load_algo_trajectories(self.algorithm, self.num_samples, self.cache_dir)
-            self._min_hint_steps = max_hint_steps(self.trajectories)
+            self._max_hint_steps = max_hint_steps(self.trajectories)
+            self._num_nodes = max_num_nodes(self.trajectories)
 
     def __len__(self):
         return self.num_samples
     
     def collate_fn(self, batch: List[Trajectory], device: Optional[torch.device]=torch.device('cpu')) -> Trajectory:
         self._maybe_load_data()
-        batched_trajectory, steps = batch_trajectories(batch, 
-                                                       min_hint_steps=self.min_hint_steps,
+        batched_trajectory = batch_trajectories(self.spec, 
+                                                       batch, 
+                                                       min_hint_steps=self.max_hint_steps,
+                                                       min_num_nodes=0,  # For same algorith, num_nodes is the same
                                                        device=device)
-        return batched_trajectory, steps
+        return batched_trajectory
 
     def __getitem__(self, idx) -> Trajectory:
         self._maybe_load_data()
         trajectory = self.algorithm.sample_trajectory() if self.generate_on_the_fly else self.trajectories[idx]
-        if self.uniform_hint_steps:
-            return self.collate_fn([trajectory])[0]
+        if self.static_batch_size:
+            return self.collate_fn([trajectory], device=None)
         return trajectory
     
 
-class MultiSizeAlgoTrajectoryDataset(ConcatDataset):
+class MultiSizeAlgoTrajectoryDataset(Dataset):
     def __init__(self, algo: Algorithms, 
-                trajectory_sizes: Union[int, List[int]], 
+                trajectory_sizes: Union[int, List[int]],
                 num_samples: int, 
                 cache_dir: Union[str, Path] = None,
                 generate_on_the_fly: bool = False,
-                uniform_hint_steps: bool = True,
-                **algo_kwargs):
+                static_batch_size: bool = True,
+                device: Optional[torch.device] = None,
+                algo_kwargs: Optional[Dict] = None):
+        super().__init__()
         
         if isinstance(trajectory_sizes, int):
             trajectory_sizes = [trajectory_sizes]
 
-        datasets = []
-        num_samples_per_algo = num_samples // len(trajectory_sizes)
-        assert num_samples_per_algo > 0, "Number of samples per algorithm must be greater than 0"
+        self.datasets = []
+        self.device = device
+        self._num_samples_per_algo = num_samples // len(trajectory_sizes)
+        assert self._num_samples_per_algo > 0, "Number of samples per algorithm must be greater than 0"
         
         for idx, size in enumerate(trajectory_sizes):
             assert size > 0, "Trajectory size must be greater than 0"
 
             if idx == len(trajectory_sizes) - 1:
                 # Last dataset gets the remaining samples
-                num_samples_per_algo = num_samples - num_samples_per_algo * idx
+                num_samples_per_algo = num_samples - self._num_samples_per_algo * idx
+            else:
+                num_samples_per_algo = self._num_samples_per_algo
 
             ds = AlgoTrajectoryDataset(algo=algo,
                                     trajectory_size=size,
                                     num_samples=num_samples_per_algo,
                                     cache_dir=cache_dir,
                                     generate_on_the_fly=generate_on_the_fly,
-                                    uniform_hint_steps=True,  # Each subset must return a batch with the same number of hint steps
-                                    **algo_kwargs)
-            datasets.append(ds)
-        super().__init__(datasets)
+                                    static_batch_size=False,  # Each subset must return a batch with the same number of hint steps
+                                    algo_kwargs=algo_kwargs)
+            self.datasets.append(ds)
+
+        self._num_samples = num_samples
         self._name = algo
-        self._spec = datasets[0].spec
-        self._min_hint_steps = None
-        self.uniform_hint_steps = uniform_hint_steps
-
-    @property
-    def min_hint_steps(self) -> int:
-        if self._min_hint_steps is None:
-            self._maybe_load_data()
-        return self._min_hint_steps
-
-    def _maybe_load_data(self):
-        for dataset in self.datasets:
-            dataset._maybe_load_data()
-        self._min_hint_steps = max(dataset.min_hint_steps for dataset in self.datasets)
-
-    def __getitem__(self, idx) -> Trajectory:
-        self._maybe_load_data()
-        return super().__getitem__(idx)
-    
-    def collate_fn(self, batch: List[Trajectory], device: Optional[torch.device]=torch.device('cpu')) -> Trajectory:
-        self._maybe_load_data()
-        min_hint_steps = self.min_hint_steps if self.uniform_hint_steps else 0
-
-        # Even with zero, all the subsets have their own unique min_hint_steps
-        batched_trajectory, steps = batch_trajectories(batch, 
-                                                       min_hint_steps=min_hint_steps,
-                                                       device=device)
-        return batched_trajectory, steps
+        self._spec = self.datasets[0].spec
+        self._max_hint_steps = None
+        self._max_num_nodes = None
+        self.static_batch_size = static_batch_size
 
     @property
     def name(self) -> str:
@@ -200,10 +257,58 @@ class MultiSizeAlgoTrajectoryDataset(ConcatDataset):
     @property
     def spec(self) -> Spec:
         return self._spec
+
+    @property
+    def max_hint_steps(self) -> int:
+        if self._max_hint_steps is None:
+            self._maybe_load_data()
+        return self._max_hint_steps
     
     @property
-    def subdataset_lens(self) -> List[int]:
-        return [len(ds) for ds in self.datasets]
+    def max_num_nodes(self) -> int:
+        if self._max_num_nodes is None:
+            self._maybe_load_data()
+        return self._max_num_nodes
+
+    def _maybe_load_data(self):
+        for dataset in self.datasets:
+            dataset._maybe_load_data()
+        self._max_hint_steps = max(dataset.max_hint_steps for dataset in self.datasets)
+        self._max_num_nodes = max(dataset.num_nodes for dataset in self.datasets)
+
+    def __len__(self):
+        return self._num_samples
+    
+    def __getitem__(self, idx: int) -> Trajectory:
+        if idx >= len(self):
+            raise IndexError(f"Index {idx} out of range for size {len(self)}")
+        self._maybe_load_data()
+        dataset_idx = idx // self._num_samples_per_algo
+        offset = idx % self._num_samples_per_algo
+        # print(f"MultiSizeAlgoTrajectoryDataset[{self.name}] dataset_idx: {dataset_idx}, offset: {offset}")
+        dataset = self.datasets[dataset_idx]
+        return dataset[offset]
+    
+    
+    def collate_fn(self, batch: List[Trajectory], device: Optional[torch.device]=torch.device('cpu')) -> Trajectory:
+        self._maybe_load_data()
+        min_hint_steps = self.max_hint_steps if self.static_batch_size else 0
+        min_num_nodes = self.max_num_nodes if self.static_batch_size else 0
+        batched_trajectory = batch_trajectories(self.spec,
+                                                       batch, 
+                                                       min_hint_steps=min_hint_steps,
+                                                       min_num_nodes=min_num_nodes,
+                                                       device=device)
+        return batched_trajectory
+    
+
+    def get_dataloader(self, batch_size: int = 32, shuffle: bool = True, drop_last: bool = False, num_workers: int = 0) -> DataLoader:
+        return DataLoader(self, 
+                        collate_fn=self.collate_fn,
+                        batch_size=batch_size, 
+                        shuffle=shuffle, 
+                        drop_last=drop_last, 
+                        num_workers=num_workers)
     
 
 class RoundRobinBatchSampler(Sampler[list[int]]):
@@ -273,52 +378,54 @@ class RoundRobinBatchSampler(Sampler[list[int]]):
         return total
 
 
-class CyclicAlgoTrajectoryDataset(Dataset):
+class ConcatAlgoTrajectoryDataset(Dataset):
     def __init__(self, algo_datasets: Union[MultiSizeAlgoTrajectoryDataset, List[MultiSizeAlgoTrajectoryDataset]]):
         super().__init__()
         if isinstance(algo_datasets, MultiSizeAlgoTrajectoryDataset):
             algo_datasets = [algo_datasets]
-
         assert all(isinstance(ds, MultiSizeAlgoTrajectoryDataset) for ds in algo_datasets), "All datasets must be MultiSizeAlgoTrajectoryDataset"
-        dataset_lens = [ds.subdataset_lens for ds in algo_datasets]
-        assert all_lists_equal(dataset_lens), "All MultiSizeAlgoTrajectoryDataset subdatasets must have the same length"
-
-        datasets = cycle_flatten_list_of_lists([ds.datasets for ds in algo_datasets])
-        self.datasets = datasets
+        assert all_lists_equal([len(ds) for ds in algo_datasets]), "All MultiSizeAlgoTrajectoryDataset have equal same length"
+        self.datasets = algo_datasets
         self.algo_to_ds_idx = {ds.name: i for i, ds in enumerate(self.datasets)}
         self._individual_ds_len = len(self.datasets[0])
-        assert all(len(ds) == self._individual_ds_len for ds in self.datasets), "All subdatasets must have the same length"
         self._spec = {ds.name: ds.spec for ds in algo_datasets}
 
     @property
-    def specs(self) -> Dict[str, Spec]:
+    def specs(self) -> Dict[Algorithms, Spec]:
         return self._spec
 
     def __len__(self):
         return self._individual_ds_len * len(self.datasets)
     
-    def __getitem__(self, idx) -> Dict[str, Trajectory]:
+    def __getitem__(self, idx) -> Dict[Algorithms, Trajectory]:
+        if idx >= len(self):
+            raise IndexError(f"Index {idx} out of range for size {len(self)}")
         dataset_idx = idx // self._individual_ds_len
         offset = idx % self._individual_ds_len
         dataset = self.datasets[dataset_idx]
-        dataset._maybe_load_data()
+        # print(f"ConcatAlgoTrajectoryDataset dataset_idx: {dataset_idx}[{dataset.name}], offset: {offset}")
         return {dataset.name: dataset[offset]}
     
-    def collate_fn(self, batch: List[Dict[str, Trajectory]], device: Optional[torch.device]=torch.device('cpu')) -> Dict[str, Trajectory]:
+    def collate_fn(self, batch: List[Dict[str, Trajectory]], device: Optional[torch.device]=torch.device('cpu')) -> Dict[Algorithms, Trajectory]:
         dict_batch = defaultdict(list)
         for sample in batch:
             for name in sample.keys():
                 dict_batch[name].append(sample[name])
         
         assert len(dict_batch) == 1, "Batch must contain only one algorithm"
-
         for name, trajectories in dict_batch.items():
             dict_batch[name] = self.datasets[self.algo_to_ds_idx[name]].collate_fn(trajectories, device)
         return dict_batch
+    
+    def get_dataloader(self, batch_size: int = 32, shuffle: bool = False, drop_last: bool = False, num_workers: int = 0) -> DataLoader:
+        return DataLoader(self, 
+                        batch_sampler=RoundRobinBatchSampler(dataset_lengths=[len(ds) for ds in self.datasets],
+                                                      batch_size=batch_size,
+                                                      shuffle=shuffle,
+                                                      drop_last=drop_last),
+                        collate_fn=self.collate_fn,
+                        num_workers=num_workers)
 
-    @property
-    def subdataset_lens(self) -> List[int]:
-        return [len(ds) for ds in self.datasets]
     
 
 class StackedAlgoTrajectoryDataset(Dataset):
@@ -329,30 +436,30 @@ class StackedAlgoTrajectoryDataset(Dataset):
         super().__init__()
         if isinstance(algo_datasets, MultiSizeAlgoTrajectoryDataset):
             algo_datasets = [algo_datasets]
-
         assert all(isinstance(ds, MultiSizeAlgoTrajectoryDataset) for ds in algo_datasets), "All datasets must be MultiSizeAlgoTrajectoryDataset"
-        dataset_lens = [ds.subdataset_lens for ds in algo_datasets]
-        assert all_lists_equal(dataset_lens), "All MultiSizeAlgoTrajectoryDataset subdatasets must have the same length"
+        assert all_lists_equal([len(ds) for ds in algo_datasets]), "All MultiSizeAlgoTrajectoryDataset have equal same length"
         self.datasets = {ds.name: ds for ds in algo_datasets}
         self.algo_names = list(self.datasets.keys())
+        self._len = len(self.datasets[self.algo_names[0]])
         assert len(self.algo_names) == len(algo_datasets), "All MultiSizeAlgoTrajectoryDatasets must have different algorithms"
-        self._subset_lens = dataset_lens[0]
-        
 
+
+    def __len__(self):
+        return self._len
+    
     @property
     def specs(self) -> Dict[str, Spec]:
         return {k: v.spec for k, v in self.datasets.items()}
     
     def __getitem__(self, idx) -> Dict[str, Trajectory]:
-        self._maybe_load_data()
+        if idx >= len(self):
+            raise IndexError(f"Index {idx} out of range for size {len(self)}")
+        
+        # print(f"StackedAlgoTrajectoryDataset idx: {idx}")
         result = {}
         for name, dataset in self.datasets.items():
             result[name] = dataset[idx]
         return result
-
-    def _maybe_load_data(self):
-        for dataset in self.datasets.values():
-            dataset._maybe_load_data()
 
     def collate_fn(self, batch: List[Dict[str, Trajectory]], device: Optional[torch.device]=torch.device('cpu')) -> Dict[str, Trajectory]:
         dict_batch = defaultdict(list)
@@ -365,10 +472,13 @@ class StackedAlgoTrajectoryDataset(Dataset):
             dict_batch[name] = self.datasets[name].collate_fn(trajectories, device)
         return dict_batch
     
-    @property
-    def subdataset_lens(self) -> List[int]:
-        return self._subset_lens
-
+    def get_dataloader(self, batch_size: int = 32, shuffle: bool = False, drop_last: bool = False, num_workers: int = 0) -> DataLoader:
+        return DataLoader(self, 
+                        collate_fn=self.collate_fn,
+                        batch_size=batch_size, 
+                        shuffle=shuffle, 
+                        drop_last=drop_last, 
+                        num_workers=num_workers)
 
 
 def get_dataset(algos: Union[Algorithms, List[Algorithms]],
@@ -376,9 +486,8 @@ def get_dataset(algos: Union[Algorithms, List[Algorithms]],
                 trajectory_sizes: Union[int, List[int]] = [4, 7, 11, 13, 16],
                 cache_dir: Optional[Union[str, Path]] = None,
                 generate_on_the_fly: bool = True,
-                uniform_hint_steps_per_algo: bool = True,
+                static_batch_size: bool = True,
                 stacked: bool = False,
-                seed: int = 42,
                 **algo_kwargs) -> StackedAlgoTrajectoryDataset:
     
     if isinstance(algos, Algorithms):
@@ -401,51 +510,89 @@ def get_dataset(algos: Union[Algorithms, List[Algorithms]],
                                             num_samples=num_samples,
                                             cache_dir=cache_dir,
                                             generate_on_the_fly=generate_on_the_fly,
-                                            uniform_hint_steps=uniform_hint_steps_per_algo,
-                                            seed=seed,
-                                            **algo_kwargs))    
+                                            static_batch_size=static_batch_size,
+                                            algo_kwargs=algo_kwargs))    
     if stacked:
         return StackedAlgoTrajectoryDataset(datasets)
     else:
-        return CyclicAlgoTrajectoryDataset(datasets)
+        return ConcatAlgoTrajectoryDataset(datasets)
     
-
-def get_dataloader(dataset: Union[StackedAlgoTrajectoryDataset, CyclicAlgoTrajectoryDataset],
-                   batch_size: int = 32,
-                   shuffle: bool = False,
-                   drop_last: bool = False,
-                   device: torch.device=torch.device('cpu'),
-                   num_workers: int = 0):
-    assert isinstance(dataset, StackedAlgoTrajectoryDataset) or isinstance(dataset, CyclicAlgoTrajectoryDataset), "Dataset must be a StackedAlgoTrajectoryDataset or CyclicAlgoTrajectoryDataset"
-    collate_fn = partial(dataset.collate_fn, device=device)
-    return DataLoader(dataset, 
-                      batch_sampler=RoundRobinBatchSampler(dataset_lengths=dataset.subdataset_lens,
-                                                          batch_size=batch_size,
-                                                          shuffle=shuffle,
-                                                          drop_last=drop_last),
-                      collate_fn=collate_fn,
-                      persistent_workers=num_workers > 0,
-                      num_workers=num_workers)
-
 
 if __name__ == "__main__":
     # Original stacked dataset and dataloader (for comparison or other tests)
     print("Testing Original Stacked Dataloader:")
-    ds = get_dataset(algos=["bfs", "dfs"],
+    # ds = get_dataset(algos=["bfs"],
+    #                 trajectory_sizes=[4, 16],
+    #                 num_samples=100, # Reduced for faster testing
+    #                 generate_on_the_fly=True,
+    #                 stacked=False,
+    #                 cache_dir=None)
+    
+    # dataloader = get_dataloader(ds, 
+    #                         batch_size=32,
+    #                         shuffle=True, 
+    #                         drop_last=False, 
+    #                         device=torch.device('cpu'), 
+    #                         num_workers=0)
+
+    # ds_algo = AlgoTrajectoryDataset(algo=Algorithms.lcs_length,
+    #                                 trajectory_size=8,
+    #                                 num_samples=100,
+    #                                 static_batch_size=True,
+    #                                 generate_on_the_fly=True,
+    #                                 cache_dir=None)
+    
+    # print(ds_algo.max_hint_steps)
+    # print(ds_algo.num_nodes)
+    # for t in ds_algo:
+    #     import ipdb; ipdb.set_trace()
+    #     doSomething = 1
+    
+
+    # ds = MultiSizeAlgoTrajectoryDataset(algo=Algorithms.lcs_length,
+    #                            trajectory_sizes=[4, 16],
+    #                            num_samples=100,
+    #                            static_batch_size=True,
+    #                            generate_on_the_fly=True,
+    #                            cache_dir=None)
+    
+    # dl = ds.get_dataloader(batch_size=32, shuffle=True, drop_last=False, num_workers=0)
+    
+    # print(len(ds))
+    # # import ipdb; ipdb.set_trace()
+    # for idx, batch in enumerate(dl):
+    #     print(f"Batch {idx}:")
+    #     # import ipdb; ipdb.set_trace()
+    #     doSomething = 1
+    #     # print(f"idx: {idx}")
+    #     pass
+
+    ds = get_dataset(algos=[Algorithms.lcs_length, Algorithms.matrix_chain_order],
                     trajectory_sizes=[4, 16],
-                    num_samples=100, # Reduced for faster testing
+                    num_samples=100,
                     generate_on_the_fly=True,
-                    stacked=False,
+                    static_batch_size=True,
+                    stacked=True,
                     cache_dir=None)
     
-    dataloader = get_dataloader(ds, 
-                            batch_size=32,
-                            shuffle=True, 
-                            drop_last=False, 
-                            device=torch.device('cpu'), 
-                            num_workers=0)
+    dl = ds.get_dataloader(batch_size=32, shuffle=False, drop_last=True, num_workers=0)
     
-    for batch in dataloader:
-        print(batch)
-        doSomething  = 1
+    for batch in dl:
+        import ipdb; ipdb.set_trace()
+        doSomething = 1
+        pass
+    
+  
+    
+    # bs = 32
+    # dl = DataLoader(ds, 
+    #                 batch_sampler=RoundRobinBatchSampler(dataset_lengths=ds.subdataset_lens,
+    #                                                     batch_size=bs,
+    #                                                     shuffle=True,
+    #                                                     drop_last=True),
+    #                 collate_fn=ds.collate_fn,
+    #                 num_workers=0)
+    # for batch in dl:
+    #     import ipdb; ipdb.set_trace()
+    #     doSomething  = 1
  

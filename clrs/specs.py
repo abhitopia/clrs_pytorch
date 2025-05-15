@@ -33,13 +33,14 @@ class Type(str, Enum):
 #   SOFT_POINTER = 'soft_pointer'                         # Not used in the code
 
 Array = Union[Tensor, np.ndarray]
+NumSteps = Union[Tensor, int]                # Int for a single trajectory, Tensor for batched trajectories
 Feature = Dict[str, Array] # Could be input or output
 # Features = List[Feature] # hints
 Input = Feature
 Hints = Feature
 Output = Feature
 Spec = Dict[str, Tuple[Stage, Location, Type, Dict[str, Any]]] # name -> (stage, location, type, metadata)
-Trajectory = Dict[Stage, Union[Input, Hints, Output]] # stage -> name -> array
+Trajectory = Dict[Stage, Tuple[Union[Input, Hints, Output], NumSteps]] # stage -> (name -> array, num_steps)
 
 class OutputClass(int, Enum):
   POSITIVE = 1

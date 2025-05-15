@@ -275,6 +275,10 @@ def train(config: TrainerConfig,
           compile: bool = False) -> None:
 
     pl.seed_everything(config.seed)
+
+    if compile:
+        torch.set_float32_matmul_precision('high')
+        
     wandb_logger = WandbLogger(
         project=project_name,
         name=run_name,

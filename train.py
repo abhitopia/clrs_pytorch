@@ -25,6 +25,7 @@ def main(
     seed: int = typer.Option(42, "--seed", "-s", help="Seed"),
     compile: bool = typer.Option(False, "--compile"),
 ) -> None:
+    
     train(
         config=TrainerConfig(algos=algos, seed=seed, batch_size=batch_size),
         project_name=project_name,

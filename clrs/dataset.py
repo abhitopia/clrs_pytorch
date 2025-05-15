@@ -83,7 +83,7 @@ class AlgoTrajectoryDataset(Dataset):
                 num_samples: int, 
                 cache_dir: Union[str, Path] = None,
                 generate_on_the_fly: bool = False,
-                uniform_hint_steps: bool = False,
+                uniform_hint_steps: bool = True,
                 **algo_kwargs):
         super().__init__()
         assert "length" not in algo_kwargs, "length must be specified in trajectory_sizes"

@@ -90,7 +90,7 @@ class Loss(nn.Module):
     def get_steps_mask(self, num_steps: Tensor, loss: Tensor) -> Tensor:
         max_steps = loss.shape[0]
         batch_size = num_steps.shape[0]
-        steps_mask = num_steps > (torch.arange(max_steps).unsqueeze(1) + 1)
+        steps_mask = num_steps > (torch.arange(max_steps, device=num_steps.device).unsqueeze(1) + 1)
         assert steps_mask.shape == (max_steps, batch_size)
         target_mask_shape = (max_steps, batch_size) + (1,) * (loss.dim() - 2)
         return steps_mask.view(target_mask_shape).type_as(loss)

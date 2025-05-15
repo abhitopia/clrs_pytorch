@@ -111,7 +111,7 @@ class AlgoTrajectoryDataset(Dataset):
     def _maybe_load_data(self):
         if self.trajectories is None:
             self.trajectories = load_algo_trajectories(self.algorithm, self.num_samples, self.cache_dir)
-            self.min_hint_steps = max_hint_steps(self.trajectories)
+            self._min_hint_steps = max_hint_steps(self.trajectories)
 
     def __len__(self):
         return self.num_samples

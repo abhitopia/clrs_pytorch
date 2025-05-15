@@ -83,16 +83,17 @@ class AlgoTrajectoryDataset(Dataset):
                 num_samples: int, 
                 cache_dir: Union[str, Path] = None,
                 generate_on_the_fly: bool = False,
+                uniform_hint_steps: bool = False,
                 **algo_kwargs):
         super().__init__()
         assert "length" not in algo_kwargs, "length must be specified in trajectory_sizes"
         self.algorithm = Algorithm(algo, length=trajectory_size, **algo_kwargs)
         self.cache_dir = cache_dir
         self.trajectories: List[Trajectory] = None
-        self.min_hint_steps = None
+        self._min_hint_steps = None
         self.num_samples = num_samples
         self.generate_on_the_fly = generate_on_the_fly
-
+        self.uniform_hint_steps = uniform_hint_steps
     @property
     def spec(self) -> Spec:
         return self.algorithm.spec
@@ -100,6 +101,12 @@ class AlgoTrajectoryDataset(Dataset):
     @property
     def name(self) -> str:
         return self.algorithm.name
+    
+    @property
+    def min_hint_steps(self) -> int:
+        if self._min_hint_steps is None:
+            self._maybe_load_data()
+        return self._min_hint_steps
 
     def _maybe_load_data(self):
         if self.trajectories is None:
@@ -117,11 +124,11 @@ class AlgoTrajectoryDataset(Dataset):
         return batched_trajectory, steps
 
     def __getitem__(self, idx) -> Trajectory:
-        if self.generate_on_the_fly:
-            return self.algorithm.sample_trajectory()
-        
         self._maybe_load_data()
-        return self.trajectories[idx]
+        trajectory = self.algorithm.sample_trajectory() if self.generate_on_the_fly else self.trajectories[idx]
+        if self.uniform_hint_steps:
+            return self.collate_fn([trajectory])[0]
+        return trajectory
     
 
 class MultiSizeAlgoTrajectoryDataset(ConcatDataset):
@@ -152,6 +159,7 @@ class MultiSizeAlgoTrajectoryDataset(ConcatDataset):
                                     num_samples=num_samples_per_algo,
                                     cache_dir=cache_dir,
                                     generate_on_the_fly=generate_on_the_fly,
+                                    uniform_hint_steps=True,  # Each subset must return a batch with the same number of hint steps
                                     **algo_kwargs)
             datasets.append(ds)
         super().__init__(datasets)
@@ -178,6 +186,8 @@ class MultiSizeAlgoTrajectoryDataset(ConcatDataset):
     def collate_fn(self, batch: List[Trajectory], device: Optional[torch.device]=torch.device('cpu')) -> Trajectory:
         self._maybe_load_data()
         min_hint_steps = self.min_hint_steps if self.uniform_hint_steps else 0
+
+        # Even with zero, all the subsets have their own unique min_hint_steps
         batched_trajectory, steps = batch_trajectories(batch, 
                                                        min_hint_steps=min_hint_steps,
                                                        device=device)

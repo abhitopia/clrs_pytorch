@@ -196,7 +196,7 @@ class ProbesDict:
 
             if t == Type.POINTER:
               # Added this so all pointers are one-hot encoded
-              data = np_one_hot(np.long(data), data.shape[-1])
+              data = np_one_hot(data.astype(int), data.shape[-1])
 
             dim_to_expand = 1 if stage == Stage.HINT else 0
             data_point = DataPoint(name=name, location=loc, type_=t,

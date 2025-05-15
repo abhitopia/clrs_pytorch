@@ -1,5 +1,12 @@
-numpy==2.2.5
-pytorch-lightning==2.5.1.post0
-torch==2.7.0
-typer==0.15.4
-wandb==0.19.11
+# pick a numpy in the 1.x series that meets most libs’ needs
+numpy>=1.21,<2.0
+
+# torch 2.7.x, but not 2.8
+torch~=2.7.0
+
+# pytorch-lightning 2.5.x
+pytorch-lightning~=2.5.1
+
+# minor‐version flexibility
+typer>=0.15.4,<0.16.0
+wandb>=0.19.11,<0.20.0

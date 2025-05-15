@@ -5,3 +5,11 @@
 - [ ] Test compilation per Algo
 - [ ] Implement chunking
 - [ ] Test compilation per Algo
+- [ ] Dynamic number of loops per batch
+
+# Evaluation
+- [ ] Implement output accuracy/score separate from hint
+
+# Monitoring
+- [ ] Remove steps done and examples seem from per algo monitoring
+- [ ] Make x-axis the total steps

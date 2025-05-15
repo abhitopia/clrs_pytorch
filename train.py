@@ -30,7 +30,7 @@ def main(
         config=TrainerConfig(algos=algos, 
                              seed=seed, 
                              batch_size=batch_size, 
-                             uniform_hint_steps=not static_num_hints),
+                             uniform_hint_steps=static_num_hints),
         project_name=project_name,
         run_name=run_name,
         checkpoint_dir=ckpt_dir,

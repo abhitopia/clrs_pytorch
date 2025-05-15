@@ -4,6 +4,10 @@ from pathlib import Path
 import typer
 from clrs.specs import Algorithms, CLRS30Algorithms
 from clrs.trainer import TrainerConfig, train
+import logging
+
+# To prevent pesky inductor warnings
+logging.getLogger("torch._inductor").setLevel(logging.ERROR)
 os.environ['TORCHINDUCTOR_CACHE_DIR'] = str(Path(__file__).parent / "torch_compile_cache")
 
 

@@ -65,8 +65,8 @@ class TrainerConfig:
     mp_steps: int = 1
 
     # Monitoring Settings
-    eval_every_x_steps: int = 50
-    test_every_x_steps: int = 500 # Evaluate every x evaluations
+    val_check_interval: int = 50
+    test_check_interval: int = 500 
 
     def to_dict(self):
         return {k: v for k, v in asdict(self).items() if not k.startswith("_")}
@@ -74,9 +74,6 @@ class TrainerConfig:
     def __post_init__(self):
         if isinstance(self.algos, Algorithms):
             self.algos = [self.algos]
-
-        self.val_check_interval = 50
-        self.test_check_interval = 500
 
         self._specs = None
         if not self.stacked:

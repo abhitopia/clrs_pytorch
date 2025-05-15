@@ -104,7 +104,7 @@ class TrainerConfig:
         return get_dataloader(ds, 
                               batch_size=self.batch_size, 
                               shuffle=True if split == Split.TRAIN else False,
-                              drop_last=True if split == Split.TRAIN else False,
+                              drop_last=True, # Avoid extra compilation 
                               num_workers=num_workers)
         
     

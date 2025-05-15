@@ -1,6 +1,7 @@
 #! python
 import os
 from pathlib import Path
+from typing import List
 import typer
 from clrs.specs import Algorithms, CLRS30Algorithms
 from clrs.trainer import TrainerConfig, train
@@ -20,21 +21,24 @@ app = typer.Typer(
 
 @app.command("train")
 def main(
-    algos: list[Algorithms] = typer.Option(CLRS30Algorithms, "--algos", "-a", help="Algorithms to train", ),
+    algos: List[Algorithms] = typer.Option(CLRS30Algorithms, "--algos", "-a", help="Algorithms to train", ),
+    train_sizes: List[int] = typer.Option([4, 7, 11, 13, 16], "--train-sizes", "-s", help="Sizes to train"),
     batch_size: int = typer.Option(32, "--batch-size", "-b", help="Batch size"),
     run_name: str = typer.Option("run_1", "--run-name", "-n", help="Run name"),
     project_name: str = typer.Option("clrs", "--project-name", "-p", help="Project name"),
     ckpt_dir: Path = typer.Option("./checkpoints", "--ckpt-dir", "-c", help="Checkpoint directory"),
-    static_num_hints: bool = typer.Option(False, "--static-num-hints", "-s", help="Use static number of hints", is_flag=True, flag_value=True),
+    static_num_hints: bool = typer.Option(False, "--static-num-hints", "--static", help="Use static number of hints", is_flag=True, flag_value=True),
     seed: int = typer.Option(42, "--seed", "-s", help="Seed"),
     compile: bool = typer.Option(False, "--compile"),
 ) -> None:
     
-    train(
-        config=TrainerConfig(algos=algos, 
+    config = TrainerConfig(algos=algos, 
                              seed=seed, 
                              batch_size=batch_size, 
-                             uniform_hint_steps=static_num_hints),
+                             uniform_hint_steps=static_num_hints)
+    config.train_data["sizes"] = train_sizes
+    train(
+        config=config,
         project_name=project_name,
         run_name=run_name,
         checkpoint_dir=ckpt_dir,

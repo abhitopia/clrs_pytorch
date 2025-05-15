@@ -1,8 +1,12 @@
 #! python
+import os
 from pathlib import Path
 import typer
 from clrs.specs import Algorithms, CLRS30Algorithms
 from clrs.trainer import TrainerConfig, train
+os.environ['TORCHINDUCTOR_CACHE_DIR'] = str(Path(__file__).parent / "torch_compile_cache")
+
+
 
 app = typer.Typer(
     name="clrs",

@@ -7,7 +7,6 @@ from clrs.trainer import TrainerConfig, train
 os.environ['TORCHINDUCTOR_CACHE_DIR'] = str(Path(__file__).parent / "torch_compile_cache")
 
 
-
 app = typer.Typer(
     name="clrs",
     help="CLRS Training CLI",
@@ -22,12 +21,16 @@ def main(
     run_name: str = typer.Option("run_1", "--run-name", "-n", help="Run name"),
     project_name: str = typer.Option("clrs", "--project-name", "-p", help="Project name"),
     ckpt_dir: Path = typer.Option("./checkpoints", "--ckpt-dir", "-c", help="Checkpoint directory"),
+    static_num_hints: bool = typer.Option(False, "--static-num-hints", "-s", help="Use static number of hints", is_flag=True, flag_value=True),
     seed: int = typer.Option(42, "--seed", "-s", help="Seed"),
     compile: bool = typer.Option(False, "--compile"),
 ) -> None:
     
     train(
-        config=TrainerConfig(algos=algos, seed=seed, batch_size=batch_size),
+        config=TrainerConfig(algos=algos, 
+                             seed=seed, 
+                             batch_size=batch_size, 
+                             uniform_hint_steps=not static_num_hints),
         project_name=project_name,
         run_name=run_name,
         checkpoint_dir=ckpt_dir,

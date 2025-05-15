@@ -1,0 +1,5 @@
+numpy==2.2.5
+pytorch-lightning==2.5.1.post0
+torch==2.7.0
+typer==0.15.4
+wandb==0.19.11

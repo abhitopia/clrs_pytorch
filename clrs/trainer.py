@@ -313,20 +313,14 @@ def train(config: TrainerConfig,
                 wandb_verbose=False
             )
         ])
-    
-    precision = "32-true"
-    if torch.cuda.is_available():
-        precision = "bf16-mixed"
-    # elif torch.backends.mps.is_available():
-    #     precision = "16-mixed"
 
     trainer = pl.Trainer(
         default_root_dir=None,
         log_every_n_steps=1,
         num_sanity_val_steps=0,
         enable_progress_bar=True,   
-        accelerator="auto",
-        precision=precision,
+        accelerator="cuda" if torch.cuda.is_available() else "cpu",
+        precision="bf16-mixed" if torch.cuda.is_available() else "32-true",
         devices='auto',
         logger=wandb_logger,
         gradient_clip_val=1.0,

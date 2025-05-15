@@ -862,6 +862,10 @@ class Model(torch.nn.Module):
                                                             hint_reconst_mode=hint_reconst_mode, 
                                                             hint_teacher_forcing=hint_teacher_forcing, 
                                                             dropout=dropout))
+            
+    def compile(self):
+        for algo_name, model in self.models.items():
+            self.models[algo_name] = torch.compile(model, fullgraph=True, mode="reduce-overhead", backend="inductor")
         
     def forward(self, trajectories: Dict[str, Tuple[Trajectory, Tensor]]) -> Tuple[Dict[str, Trajectory], Dict[str, Trajectory]]:
         predictions = {}
@@ -875,69 +879,4 @@ class Model(torch.nn.Module):
         for algo, (target_trajectory, _) in target.items():
             evaluations[algo] = self.models[algo].evaluate(predictions[algo], target_trajectory)
         return evaluations
-
-if __name__ == "__main__":
-    from clrs_python.dataset import get_dataset, get_dataloader
-    from clrs_python.specs import CLRS30_ALGS
-    from pytorch_lightning import seed_everything
-
-    seed_everything(42)
-
-    from clrs_python.processors import ProcessorFactory
-
-
-    # TODO: Add a config file
-    ds = get_dataset(algos=CLRS30_ALGS,
-                     trajectory_sizes=[8],
-                     num_samples=1000,
-                     generate_on_the_fly=True,
-                     cache_dir=None)
-
-    loader = get_dataloader(dataset=ds, 
-                            batch_size=32,
-                            shuffle=True, 
-                            drop_last=False,
-                            num_workers=0)
-
-    for processor in ProcessorFactory:
-        print(f"Processor: {processor.name}")
-        processor = processor(hidden_dim=128, use_ln=True, nb_heads=4, mp_steps=1)
-        multi_model = Model(specs=ds.specs, 
-                            processor=processor, 
-                            hidden_dim=128, 
-                            encode_hints=True, 
-                            decode_hints=True,
-                            hint_reconst_mode=ReconstMode.SOFT,
-                        hint_teacher_forcing=0.0,
-                        use_lstm=False,
-                        dropout=0.0)
-    
-    # multi_model = torch.compile(
-    #         multi_model,
-    #         fullgraph=True,
-    #         mode="reduce-overhead", 
-    #         # mode="max-autotune",
-    #         backend="inductor"
-    #     )
-
-
-        for idx, trajectories in enumerate(loader):
-            # max_hint = 0.0
-            # for algo_name, loss in trajectories.items():
-            #     trajectory, num_steps = trajectories[algo_name]
-            #     for key, value in trajectory[Stage.HINT].items():
-            #         if value.abs().max() > max_hint:
-            #             max_hint = value.abs().max()
-            #             print(f"max_hint: {algo_name} {key} = {max_hint}")
-            #             # break
-            prediction, losses = multi_model(trajectories)
-            print(f"losses: {losses}")
-            # for algo_name, loss in losses.items():
-            #     for key, value in prediction[algo_name][Stage.HINT].items():
-            #         if torch.isnan(value).any():
-            #             print(algo_name, key, )
-            #             # break
-            break
-        
-
 

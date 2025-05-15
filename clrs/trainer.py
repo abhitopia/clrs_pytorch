@@ -143,15 +143,15 @@ class TrainerConfig:
     
 
 class DataModule(pl.LightningDataModule):
-    def __init__(self, config: TrainerConfig):
+    def __init__(self, config: TrainerConfig, num_workers: int = 0):
         super().__init__()
         self.config = config
+        self.num_workers = num_workers
 
     def setup(self, stage: Optional[str] = None):
-        num_workers = min(os.cpu_count() - 1, 8)
-        self.train_dl = self.config.get_dataloader(Split.TRAIN, num_workers=num_workers)
-        self.val_dl = self.config.get_dataloader(Split.VAL, num_workers=num_workers)
-        self.test_dl = self.config.get_dataloader(Split.TEST, num_workers=num_workers)
+        self.train_dl = self.config.get_dataloader(Split.TRAIN, num_workers=self.num_workers)
+        self.val_dl = self.config.get_dataloader(Split.VAL, num_workers=self.num_workers)
+        self.test_dl = self.config.get_dataloader(Split.TEST, num_workers=self.num_workers)
 
     def train_dataloader(self):
         return self.train_dl
@@ -182,14 +182,15 @@ class TrainingModel(pl.LightningModule):
             # torch._dynamo.config.dynamic_shapes = True
             torch._dynamo.config.recompile_limit = 256
             print("Compiling model using torch.compile...")
-            self.model = torch.compile(
-                self.model,
-                fullgraph=True,
-                mode="reduce-overhead", 
-                # dynamic=True,
-                # mode="max-autotune",
-                backend="inductor"
-            )
+            # self.model = torch.compile(
+            #     self.model,
+            #     fullgraph=True,
+            #     mode="reduce-overhead", 
+            #     # dynamic=True,
+            #     # mode="max-autotune",
+            #     backend="inductor"
+            # )
+            self.model.compile()
         else:
             print("Model compilation disabled; skipping torch.compile.")
 
@@ -269,8 +270,12 @@ def train(config: TrainerConfig,
           project_name: str = 'clrs', 
           checkpoint_dir: str = './checkpoints',
           wandb_logging: bool = True,
+          debug: bool = False,
           compile: bool = False) -> None:
 
+    num_workers = 0 if debug else min(os.cpu_count() - 1, 8)
+    project_name = project_name + "_debug" if debug else project_name
+    
     pl.seed_everything(config.seed)
 
     if torch.cuda.is_available():
@@ -336,7 +341,7 @@ def train(config: TrainerConfig,
     with trainer.init_module():
         model = TrainingModel(config, compile=compile)
 
-    trainer.fit(model, datamodule=DataModule(config))
+    trainer.fit(model, datamodule=DataModule(config, num_workers=num_workers))
 
 
 

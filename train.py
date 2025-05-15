@@ -32,12 +32,13 @@ def main(
     static_num_hints: bool = typer.Option(False, "--static-num-hints", "--static", help="Use static number of hints", is_flag=True, flag_value=True),
     seed: int = typer.Option(42, "--seed", "-sd", help="Seed"),
     compile: bool = typer.Option(False, "--compile"),
+    debug: bool = typer.Option(False, "--debug", "-D", help="Debug mode", is_flag=True, flag_value=True),
 ) -> None:
     
     config = TrainerConfig(algos=algos, 
-                             seed=seed, 
-                             batch_size=batch_size, 
-                             uniform_hint_steps=static_num_hints)
+                        seed=seed, 
+                        batch_size=batch_size, 
+                        uniform_hint_steps=static_num_hints)
     config.train_data["sizes"] = train_sizes
 
    
@@ -50,7 +51,8 @@ def main(
         project_name=project_name,
         run_name=run_name,
         checkpoint_dir=ckpt_dir,
-        compile=compile
+        compile=compile,
+        debug=debug
     )
 
 if __name__ == "__main__":

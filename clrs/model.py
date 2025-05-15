@@ -578,7 +578,8 @@ class AlgoEncoder(nn.ModuleDict):
     def forward(self, input: Input, step_hints: Hints) -> GraphFeatures:
         batch_size = next(iter(input.values())).shape[0]
         nb_nodes = next(iter(input.values())).shape[1]
-        graph_features = GraphFeatures.empty(batch_size, nb_nodes, self.hidden_dim)
+        device = next(iter(input.values())).device
+        graph_features = GraphFeatures.empty(batch_size, nb_nodes, self.hidden_dim, device=device)
 
         for name, data in input.items():
             graph_features = self.encoders[Stage.INPUT][name].encode(data, graph_features)

@@ -276,9 +276,9 @@ def train(config: TrainerConfig,
 
     pl.seed_everything(config.seed)
 
-    if compile:
+    if torch.cuda.is_available():
         torch.set_float32_matmul_precision('high')
-        
+
     wandb_logger = WandbLogger(
         project=project_name,
         name=run_name,

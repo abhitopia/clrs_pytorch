@@ -6,6 +6,7 @@ import typer
 from clrs.specs import Algorithms, CLRS30Algorithms
 from clrs.trainer import TrainerConfig, train
 import logging
+from rich import print
 
 # To prevent pesky inductor warnings
 logging.getLogger("torch._inductor").setLevel(logging.ERROR)
@@ -28,7 +29,7 @@ def main(
     project_name: str = typer.Option("clrs", "--project-name", "-p", help="Project name"),
     ckpt_dir: Path = typer.Option("./checkpoints", "--ckpt-dir", "-c", help="Checkpoint directory"),
     static_num_hints: bool = typer.Option(False, "--static-num-hints", "--static", help="Use static number of hints", is_flag=True, flag_value=True),
-    seed: int = typer.Option(42, "--seed", "-s", help="Seed"),
+    seed: int = typer.Option(42, "--seed", "-sd", help="Seed"),
     compile: bool = typer.Option(False, "--compile"),
 ) -> None:
     
@@ -37,6 +38,8 @@ def main(
                              batch_size=batch_size, 
                              uniform_hint_steps=static_num_hints)
     config.train_data["sizes"] = train_sizes
+
+    print("Config:", config.to_dict())
     train(
         config=config,
         project_name=project_name,

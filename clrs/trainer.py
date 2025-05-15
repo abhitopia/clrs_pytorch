@@ -274,6 +274,7 @@ def train(config: TrainerConfig,
           wandb_logging: bool = True,
           compile: bool = False) -> None:
 
+    pl.seed_everything(config.seed)
     wandb_logger = WandbLogger(
         project=project_name,
         name=run_name,

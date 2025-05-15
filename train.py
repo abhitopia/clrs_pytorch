@@ -17,10 +17,11 @@ def main(
     run_name: str = typer.Option("run_1", "--run-name, -n", help="Run name"),
     project_name: str = typer.Option("clrs", "--project-name, -p", help="Project name"),
     ckpt_dir: Path = typer.Option("./checkpoints", "--ckpt-dir, -c", help="Checkpoint directory"),
+    seed: int = typer.Option(42, "--seed, -s", help="Seed"),
     compile: bool = typer.Option(False, "--compile"),
 ) -> None:
     train(
-        config=TrainerConfig(algos=algos),
+        config=TrainerConfig(algos=algos, seed=seed),
         project_name=project_name,
         run_name=run_name,
         checkpoint_dir=ckpt_dir,

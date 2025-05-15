@@ -1,5 +1,6 @@
 #! python
 import os
+import torch
 from pathlib import Path
 from typing import List
 import typer
@@ -38,6 +39,10 @@ def main(
                              batch_size=batch_size, 
                              uniform_hint_steps=static_num_hints)
     config.train_data["sizes"] = train_sizes
+
+   
+    if torch.cuda.is_available() and compile:
+        print("WARNING: Currently compiling seems to be broken on CUDA. Use at your own risk!")
 
     print("Config:", config.to_dict())
     train(

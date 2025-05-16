@@ -4,7 +4,7 @@ from torch import Tensor
 import torch
 from .base import Processor, GraphFeatures
 import torch.nn.functional as F
-from ..utils import Linear
+from ..utils import Linear, get_mask, expand_trailing_dims_as
 
 class GAT(Processor):
     """Graph Attention Network (Velickovic et al., ICLR 2018)."""
@@ -54,7 +54,7 @@ class GAT(Processor):
     def returns_edge_fts(self):
         return False
 
-    def forward(self, graph_features: GraphFeatures, processor_state: Optional[Tensor] = None, **kwargs) -> Tuple[Tensor, Optional[Tensor]]:
+    def forward(self, graph_features: GraphFeatures, processor_state: Optional[Tensor] = None, num_nodes: Optional[int] = None) -> Tuple[Tensor, Optional[Tensor]]:
         B, N, D = graph_features.node_fts.shape
         assert graph_features.adj_mat.shape == (B, N, N)
         assert graph_features.edge_fts.shape == (B, N, N, D)
@@ -67,9 +67,14 @@ class GAT(Processor):
         att_e = self.a_e(graph_features.edge_fts).permute(0, 3, 1, 2) # [B, H, N, N]
         att_g = self.a_g(graph_features.graph_fts).unsqueeze(-1).unsqueeze(-1) # [B, H, 1, 1]
 
-        bias_mat = (graph_features.adj_mat - 1.0) * 1e9  # [B, N, N]
+        bias_mat = (graph_features.adj_mat - 1.0) * 1.0e9  # [B, N, N]
         bias_mat = torch.tile(bias_mat[..., None], (1, 1, 1, self.nb_heads)) # [B, N, N, H]
         bias_mat = bias_mat.permute(0, 3, 1, 2) # [B, H, N, N]
+
+        if num_nodes is not None:
+            edge_mask = get_mask(num_nodes, N, 2) # [B, N, N]
+        else:
+            edge_mask = graph_features.adj_mat.to(torch.bool) # [B, N, N]
 
   
         for _ in range(self.mp_steps):
@@ -78,6 +83,17 @@ class GAT(Processor):
             att_2n = self.a_2n(node_state).unsqueeze(-1).permute(0, 2, 3, 1) # [B, H, 1, N]
 
             logits = att_1n + att_2n + att_e + att_g # [B, H, N, N]
+            head_mask = edge_mask.unsqueeze(1) # [B, 1, N, N]
+            logits = logits.masked_fill(~head_mask, float('-inf'))  # Apply the node mask
+
+            # 2) find rows with *zero* valid entries
+            # head_mask.any(dim=-1): [B, 1, N], True if node i has ≥1 valid neighbor
+            # row_has_valid = head_mask.any(dim=-1, keepdim=True)           # [B, 1, N, 1]
+            # row_has_valid = row_has_valid.expand_as(logits) # [B, H, N, N]
+
+            # # 3) for those entirely-invalid rows, fill logits with 0 instead of -inf
+            # logits = torch.where(row_has_valid, logits, torch.zeros_like(logits))
+
             att_coeff = torch.softmax(F.leaky_relu(logits) + bias_mat, dim=-1) # [B, H, N, N]
 
             values = self.m(node_state) # [B, N, H*F]
@@ -93,6 +109,10 @@ class GAT(Processor):
 
             ret = self.activation(ret)
             ret = self.ln(ret)
+
+            if num_nodes is not None:
+                ret = ret.masked_fill(~expand_trailing_dims_as(get_mask(num_nodes, N, 1), ret), 0.0)
+
             processor_state = ret
         return processor_state, None
 
@@ -100,12 +120,13 @@ class GAT(Processor):
 class GATFull(GAT):
     """Graph Attention Network with full adjacency matrix."""
 
-    def process(self, graph_features: GraphFeatures, processor_state: Optional[Tensor] = None, **kwargs) -> Tuple[Tensor, Optional[Tensor]]:
-        graph_features = GraphFeatures(torch.ones_like(graph_features.adj_mat), 
-                                   graph_features.node_fts, 
-                                   graph_features.edge_fts, 
-                                   graph_features.graph_fts)
-        return super().process(graph_features, processor_state, **kwargs)
+    def forward(self, graph_features: GraphFeatures, processor_state: Optional[Tensor] = None, num_nodes: Optional[int] = None) -> Tuple[Tensor, Optional[Tensor]]:
+        graph_features.adj_mat = torch.ones_like(graph_features.adj_mat)
+        if num_nodes is not None:
+            valid = get_mask(num_nodes, graph_features.adj_mat.size(-1), 2).type_as(graph_features.adj_mat)
+            graph_features.adj_mat = graph_features.adj_mat * valid
+        
+        return super().forward(graph_features, processor_state, num_nodes)
   
 
 class GATv2(Processor):
@@ -172,7 +193,7 @@ class GATv2(Processor):
 
         self.ln = nn.LayerNorm(self.hidden_size) if use_layer_norm else nn.Identity()
 
-    def forward(self, graph_features: GraphFeatures, processor_state: Optional[Tensor] = None, **kwargs) -> Tuple[Tensor, Optional[Tensor]]:
+    def forward(self, graph_features: GraphFeatures, processor_state: Optional[Tensor] = None, num_nodes: Optional[int] = None) -> Tuple[Tensor, Optional[Tensor]]:
         """GATv2 inference step."""
         B, N, D = graph_features.node_fts.shape
         assert graph_features.adj_mat.shape == (B, N, N)
@@ -225,9 +246,9 @@ class GATv2(Processor):
 class GATv2Full(GATv2):
   """Graph Attention Network v2 with full adjacency matrix."""
 
-  def process(self, graph_features: GraphFeatures, processor_state: Optional[Tensor] = None, **kwargs) -> Tuple[Tensor, Optional[Tensor]]:
+  def process(self, graph_features: GraphFeatures, processor_state: Optional[Tensor] = None, num_nodes: Optional[int] = None) -> Tuple[Tensor, Optional[Tensor]]:
     graph_features = GraphFeatures(torch.ones_like(graph_features.adj_mat), 
                                    graph_features.node_fts, 
                                    graph_features.edge_fts, 
                                    graph_features.graph_fts)
-    return super().process(graph_features, processor_state, **kwargs)
+    return super().process(graph_features, processor_state, num_nodes)

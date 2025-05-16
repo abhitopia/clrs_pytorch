@@ -898,6 +898,9 @@ class Model(torch.nn.Module):
 
 
 if __name__ == "__main__":
+    import pytorch_lightning as pl
+    pl.seed_everything(42)
+    torch.use_deterministic_algorithms(True)
     from .dataset import get_dataset
     from torch.utils.data import DataLoader
     from .processors import ProcessorFactory
@@ -956,7 +959,7 @@ if __name__ == "__main__":
     dropout = 0.0
 
 
-    process_classes = [p for p in list(ProcessorFactory) if 'gat' not  in p.name]
+    process_classes = [p for p in list(ProcessorFactory) if 'gat' in p.name and '2' in p.name]
 
     import ipdb; ipdb.set_trace()
     for processor_cls in process_classes:
@@ -1020,8 +1023,9 @@ if __name__ == "__main__":
         print('-'*30)
         nps2, nxe2 = model.processor(g2, processor_state=ps2, num_nodes=n2)
 
+        import ipdb; ipdb.set_trace()
         assert (nps1[:, :, :] == nps2[:, :4, :]).all()
-        assert (nps1[:, 4:, :] == 0).all()
+        assert (nps2[:, 4:, :] == 0).all()
 
         if nxe1 is None: 
             assert nxe2 is None

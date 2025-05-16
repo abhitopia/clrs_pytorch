@@ -242,9 +242,11 @@ class ProbesDict:
                 meta = {}
                 if dp.type_ == Type.CATEGORICAL:
                    meta = {'num_classes': dp.data.shape[-1]}
+                elif stage == Stage.INPUT and dp.name == 'pos':
+                   num_nodes = dp.data.shape[1]
                 spec[dp.name] = (stage, dp.location, dp.type_, meta)
 
-        feature = (trajectory, num_steps_hint)
+        feature = (trajectory, num_steps_hint, num_nodes)
         
         return feature, spec
 

@@ -42,7 +42,7 @@ Hints = DataPoint
 Output = DataPoint
 Spec = Dict[str, Tuple[Stage, Location, Type, Dict[str, Any]]] # name -> (stage, location, type, metadata)
 Trajectory = Dict[Stage, Union[Input, Hints, Output, DataPoint]] # stage -> (name -> array, num_steps)
-Feature = Tuple[Trajectory, NumSteps]
+Feature = Tuple[Trajectory, NumSteps, NumNodes]
 
 
 class OutputClass(int, Enum):

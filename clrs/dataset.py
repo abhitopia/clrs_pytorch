@@ -31,58 +31,15 @@ def load_algo_features(algo: Algorithm, num_samples: int, cache_dir: Union[str, 
         pickle.dump(features, cache_file.open("wb"))
     return features
 
-
-def hint_steps(feature: Feature) -> int:
-    """
-    To be used with a "non-batched" feature. Must have a batch size of 1.
-    Returns the number of hint steps in the trajectory.
-    """
-    trajectory = feature[0]
-    time_dims = [v.shape[0] for v in trajectory[Stage.HINT].values()]
-    batch_dims = [v.shape[1] for v in trajectory[Stage.HINT].values()]
-    assert all_lists_equal(time_dims), "All hint steps must be the same"
-    assert all(bd == 1 for bd in batch_dims), "Batch size of hint must be 1"
-    assert time_dims[0] == feature[1], "Hints steps don't match"
-    return time_dims[0]
-
-
-def num_nodes(feature: Feature) -> int:
-    """
-    To be used with a "non-batched" feature. Must have a batch size of 1.
-    Returns the number of nodes in the trajectory.
-    """
-    trajectory = feature[0]
-    batch_dims = [] 
-    time_dims = []
-    node_dims = [] 
-    
-    for stage in trajectory.keys():
-        for _, value in trajectory[stage].items():
-            if stage == Stage.HINT:
-                batch_dims.append(value.shape[1])
-                time_dims.append(value.shape[0])
-                if value.ndim > 3:  # It could be that the last dimension is number of classes, so we skip any feature with less than 4 dimensions to estimate the number of nodes
-                    node_dims.append(value.shape[2]) # The first node after the time and batch dimensions
-            else:
-                batch_dims.append(value.shape[0])
-                if value.ndim > 2:  # It could be that the last dimension is number of classes, so we skip any feature with less than 3 dimensions to estimate the number of nodes
-                    node_dims.append(value.shape[1]) # The first node after the time and batch dimensions
-    
-    assert all_lists_equal(batch_dims), "All batch dimensions must be the same"
-    assert all_lists_equal(time_dims), "All time dimensions must be the same"
-    assert all_lists_equal(node_dims), "All node dimensions must be the same"
-    node_dim = node_dims[0]
-    assert node_dim > 0, "Number of nodes must be greater than 0"
-    return node_dim
-
-
 def max_hint_steps(features: List[Feature]) -> int:
     steps = [feature[1] for feature in features]
     assert all(isinstance(s, int) for s in steps), "All steps must be an integer"
     return max(steps)
 
 def max_num_nodes(features: List[Feature]) -> int:
-    return max(num_nodes(feature) for feature in features)
+    num_nodes = [feature[2] for feature in features]
+    assert all(isinstance(n, int) for n in num_nodes), "All num_nodes must be an integer"
+    return max(num_nodes)
 
 def batch_features(spec: Spec, features: List[Feature], min_hint_steps: int = 0, min_num_nodes: int = 0, device: Optional[torch.device]=torch.device('cpu')) -> Feature:
     """
@@ -118,7 +75,7 @@ def batch_features(spec: Spec, features: List[Feature], min_hint_steps: int = 0,
         return data
 
     for stage in Stage:
-        for trajectory, _ in features:
+        for trajectory, _, _ in features:
             for key, value in trajectory[stage].items():
                 assert isinstance(value, np.ndarray), "Value must be a numpy array" # At this point, the value is a numpy array
                 if key not in batch_trajectory[stage]:
@@ -133,13 +90,17 @@ def batch_features(spec: Spec, features: List[Feature], min_hint_steps: int = 0,
             if device is not None:
                 batch_trajectory[stage][key] = torch.from_numpy(batch_trajectory[stage][key]).float().to(device)
 
-    steps = [num_steps for _, num_steps in features]
+    steps = [num_steps for _, num_steps, _ in features]
+    num_nodes = [num_nodes for _, _, num_nodes in features]
     assert all(isinstance(s, int) for s in steps), "All steps must be an integer" # At this point, the steps are integers
+    assert all(isinstance(n, int) for n in num_nodes), "All num_nodes must be an integer"
     if device is not None:
         steps = torch.from_numpy(np.array(steps)).long().to(device)
+        num_nodes = torch.from_numpy(np.array(num_nodes)).long().to(device)
     else:
         steps = steps[0] if len(steps) == 1 else steps   # In the case of a single trajectory and not converted to tensor
-    batch_feature = (batch_trajectory, steps)   
+        num_nodes = num_nodes[0] if len(num_nodes) == 1 else num_nodes
+    batch_feature = (batch_trajectory, steps, num_nodes)
     return batch_feature
 
 
@@ -304,7 +265,7 @@ class MultiSizeAlgoFeatureDataset(Dataset):
         return batched_feature
     
 
-    def get_dataloader(self, batch_size: int = 32, shuffle: bool = True, drop_last: bool = False, num_workers: int = 0) -> DataLoader:
+    def get_dataloader(self, batch_size: int = 32, shuffle: bool = False, drop_last: bool = False, num_workers: int = 0) -> DataLoader:
         return DataLoader(self, 
                         collate_fn=self.collate_fn,
                         batch_size=batch_size, 

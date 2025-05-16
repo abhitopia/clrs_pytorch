@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 import torch.nn.functional as F
-from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output, OutputClass
+from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output, OutputClass, AlgorithmEnum
 from .utils import log_sinkhorn, Linear
 from .processors import GraphFeatures, Processor
 
@@ -867,7 +867,7 @@ class Model(torch.nn.Module):
         for algo_name, model in self.models.items():
             self.models[algo_name] = torch.compile(model, fullgraph=True, mode="reduce-overhead", backend="inductor")
         
-    def forward(self, trajectories: Dict[str, Tuple[Trajectory, Tensor]]) -> Tuple[Dict[str, Trajectory], Dict[str, Trajectory]]:
+    def forward(self, trajectories: Dict[str, Trajectory]) -> Tuple[Dict[str, Trajectory], Dict[str, Trajectory]]:
         predictions = {}
         losses = {}
         for algo, (trajectory, num_steps) in trajectories.items():

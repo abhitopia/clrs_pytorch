@@ -9,7 +9,7 @@ from torch.optim import Adam
 import torch
 from .utils import tree_map
 from .trainer_utils import CustomRichProgressBar, normalize_state_dict, ModelCheckpointWithWandbSync
-from .specs import CLRS30Algorithms, Algorithms, Spec
+from .specs import CLRS30Algorithms, AlgorithmEnum, Spec
 from .processors import ProcessorFactory
 from .model import Model, ReconstMode
 from .dataset import get_dataset, get_dataloader
@@ -21,7 +21,7 @@ class Split(str, Enum):
 
 @dataclass
 class TrainerConfig:
-    algos: Union[Algorithms, List[Algorithms]] = field(default_factory=lambda: CLRS30Algorithms)
+    algos: Union[AlgorithmEnum, List[AlgorithmEnum]] = field(default_factory=lambda: CLRS30Algorithms)
     num_steps: int = 10000
     stacked: bool = False                                   # Paper found non-stacked training to be better      
     batch_size: int = 32
@@ -72,7 +72,7 @@ class TrainerConfig:
         return {k: v for k, v in asdict(self).items() if not k.startswith("_")}
 
     def __post_init__(self):
-        if isinstance(self.algos, Algorithms):
+        if isinstance(self.algos, AlgorithmEnum):
             self.algos = [self.algos]
 
         self._specs = None

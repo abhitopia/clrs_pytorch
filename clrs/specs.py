@@ -34,20 +34,23 @@ class Type(str, Enum):
 
 Array = Union[Tensor, np.ndarray]
 NumSteps = Union[Tensor, int]                # Int for a single trajectory, Tensor for batched trajectories
-Feature = Dict[str, Array] # Could be input or output
+NumNodes = Union[Tensor, int]                # Int for a single trajectory, Tensor for batched trajectories
+DataPoint = Dict[str, Array] # Could be input or output
 # Features = List[Feature] # hints
-Input = Feature
-Hints = Feature
-Output = Feature
+Input = DataPoint
+Hints = DataPoint
+Output = DataPoint
 Spec = Dict[str, Tuple[Stage, Location, Type, Dict[str, Any]]] # name -> (stage, location, type, metadata)
-Trajectory = Dict[Stage, Tuple[Union[Input, Hints, Output], NumSteps]] # stage -> (name -> array, num_steps)
+Trajectory = Dict[Stage, Union[Input, Hints, Output, DataPoint]] # stage -> (name -> array, num_steps)
+Feature = Tuple[Trajectory, NumSteps]
+
 
 class OutputClass(int, Enum):
   POSITIVE = 1
   NEGATIVE = 0
   MASKED = -1
 
-class Algorithms(str, Enum):
+class AlgorithmEnum(str, Enum):
     find_maximum_subarray = 'find_maximum_subarray'
     find_maximum_subarray_kadane = 'find_maximum_subarray_kadane'
     matrix_chain_order = 'matrix_chain_order'
@@ -88,28 +91,28 @@ class Algorithms(str, Enum):
     kmp_matcher = 'kmp_matcher'
 
 
-CLRS30Algorithms = [algo for algo in Algorithms if algo not in [Algorithms.find_maximum_subarray, Algorithms.bipartite_matching]]
+CLRS30Algorithms = [algo for algo in AlgorithmEnum if algo not in [AlgorithmEnum.find_maximum_subarray, AlgorithmEnum.bipartite_matching]]
 
 
 # These algorithms have a static hint called pred_h which 
 # can be moved to the input
 HAS_STATIC_HINT = set([
-    Algorithms.binary_search,
-    Algorithms.minimum,
-    Algorithms.find_maximum_subarray,
-    Algorithms.find_maximum_subarray_kadane,
-    Algorithms.matrix_chain_order,
-    Algorithms.lcs_length,
-    Algorithms.optimal_bst,
-    Algorithms.activity_selector,
-    Algorithms.task_scheduling,
-    Algorithms.naive_string_matcher,
-    Algorithms.kmp_matcher,
-    Algorithms.jarvis_march
+    AlgorithmEnum.binary_search,
+    AlgorithmEnum.minimum,
+    AlgorithmEnum.find_maximum_subarray,
+    AlgorithmEnum.find_maximum_subarray_kadane,
+    AlgorithmEnum.matrix_chain_order,
+    AlgorithmEnum.lcs_length,
+    AlgorithmEnum.optimal_bst,
+    AlgorithmEnum.activity_selector,
+    AlgorithmEnum.task_scheduling,
+    AlgorithmEnum.naive_string_matcher,
+    AlgorithmEnum.kmp_matcher,
+    AlgorithmEnum.jarvis_march
 ])
 
 RAW_SPECS = types.MappingProxyType({
-    Algorithms.insertion_sort: {
+    AlgorithmEnum.insertion_sort: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'key': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'pred': (Stage.OUTPUT, Location.NODE, Type.POINTER_OR_PERMUTATION_WITH_MASK),
@@ -117,7 +120,7 @@ RAW_SPECS = types.MappingProxyType({
         'i': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'j': (Stage.HINT, Location.NODE, Type.MASK_ONE),
     },
-    Algorithms.bubble_sort: {
+    AlgorithmEnum.bubble_sort: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'key': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'pred': (Stage.OUTPUT, Location.NODE, Type.POINTER_OR_PERMUTATION_WITH_MASK),
@@ -125,7 +128,7 @@ RAW_SPECS = types.MappingProxyType({
         'i': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'j': (Stage.HINT, Location.NODE, Type.MASK_ONE),
     },
-    Algorithms.heapsort: {
+    AlgorithmEnum.heapsort: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'key': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'pred': (Stage.OUTPUT, Location.NODE, Type.POINTER_OR_PERMUTATION_WITH_MASK),
@@ -137,7 +140,7 @@ RAW_SPECS = types.MappingProxyType({
         'heap_size': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'phase': (Stage.HINT, Location.GRAPH, Type.CATEGORICAL),
     },
-    Algorithms.quicksort: {
+    AlgorithmEnum.quicksort: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'key': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'pred': (Stage.OUTPUT, Location.NODE, Type.POINTER_OR_PERMUTATION_WITH_MASK),
@@ -147,7 +150,7 @@ RAW_SPECS = types.MappingProxyType({
         'i': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'j': (Stage.HINT, Location.NODE, Type.MASK_ONE),
     },
-    Algorithms.quickselect: {
+    AlgorithmEnum.quickselect: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'key': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'median': (Stage.OUTPUT, Location.NODE, Type.MASK_ONE),
@@ -160,7 +163,7 @@ RAW_SPECS = types.MappingProxyType({
         'target': (Stage.HINT, Location.GRAPH, Type.SCALAR),
         'pivot': (Stage.HINT, Location.NODE, Type.MASK_ONE),
     },
-    Algorithms.minimum: {
+    AlgorithmEnum.minimum: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'key': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'min': (Stage.OUTPUT, Location.NODE, Type.MASK_ONE),
@@ -168,7 +171,7 @@ RAW_SPECS = types.MappingProxyType({
         'min_h': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'i': (Stage.HINT, Location.NODE, Type.MASK_ONE),
     },
-    Algorithms.binary_search: {
+    AlgorithmEnum.binary_search: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'key': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'target': (Stage.INPUT, Location.GRAPH, Type.SCALAR),
@@ -178,7 +181,7 @@ RAW_SPECS = types.MappingProxyType({
         'high': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'mid': (Stage.HINT, Location.NODE, Type.MASK_ONE),
     },
-    Algorithms.find_maximum_subarray: {
+    AlgorithmEnum.find_maximum_subarray: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'key': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'start': (Stage.OUTPUT, Location.NODE, Type.MASK_ONE),
@@ -206,7 +209,7 @@ RAW_SPECS = types.MappingProxyType({
         'right_x_sum': (Stage.HINT, Location.GRAPH, Type.SCALAR),
         'phase': (Stage.HINT, Location.GRAPH, Type.CATEGORICAL),
     },
-    Algorithms.find_maximum_subarray_kadane: {
+    AlgorithmEnum.find_maximum_subarray_kadane: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'key': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'start': (Stage.OUTPUT, Location.NODE, Type.MASK_ONE),
@@ -219,7 +222,7 @@ RAW_SPECS = types.MappingProxyType({
         'j': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'sum': (Stage.HINT, Location.GRAPH, Type.SCALAR),
     },
-    Algorithms.matrix_chain_order: {
+    AlgorithmEnum.matrix_chain_order: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'p': (Stage.INPUT, Location.NODE, Type.SCALAR),
         's': (Stage.OUTPUT, Location.EDGE, Type.POINTER),
@@ -228,7 +231,7 @@ RAW_SPECS = types.MappingProxyType({
         's_h': (Stage.HINT, Location.EDGE, Type.POINTER),
         'msk': (Stage.HINT, Location.EDGE, Type.MASK),
     },
-    Algorithms.lcs_length: {
+    AlgorithmEnum.lcs_length: {
         'string': (Stage.INPUT, Location.NODE, Type.MASK),
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'key': (Stage.INPUT, Location.NODE, Type.CATEGORICAL),
@@ -237,7 +240,7 @@ RAW_SPECS = types.MappingProxyType({
         'b_h': (Stage.HINT, Location.EDGE, Type.CATEGORICAL),
         'c': (Stage.HINT, Location.EDGE, Type.SCALAR),
     },
-    Algorithms.optimal_bst: {
+    AlgorithmEnum.optimal_bst: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'p': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'q': (Stage.INPUT, Location.NODE, Type.SCALAR),
@@ -248,7 +251,7 @@ RAW_SPECS = types.MappingProxyType({
         'w': (Stage.HINT, Location.EDGE, Type.SCALAR),
         'msk': (Stage.HINT, Location.EDGE, Type.MASK),
     },
-    Algorithms.activity_selector: {
+    AlgorithmEnum.activity_selector: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         's': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'f': (Stage.INPUT, Location.NODE, Type.SCALAR),
@@ -258,7 +261,7 @@ RAW_SPECS = types.MappingProxyType({
         'm': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'k': (Stage.HINT, Location.NODE, Type.MASK_ONE),
     },
-    Algorithms.task_scheduling: {
+    AlgorithmEnum.task_scheduling: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'd': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'w': (Stage.INPUT, Location.NODE, Type.SCALAR),
@@ -268,7 +271,7 @@ RAW_SPECS = types.MappingProxyType({
         'i': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         't': (Stage.HINT, Location.GRAPH, Type.SCALAR),
     },
-    Algorithms.dfs: {
+    AlgorithmEnum.dfs: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
         'adj': (Stage.INPUT, Location.EDGE, Type.MASK),
@@ -284,7 +287,7 @@ RAW_SPECS = types.MappingProxyType({
         's_last': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'time': (Stage.HINT, Location.GRAPH, Type.SCALAR),
     },
-    Algorithms.topological_sort: {
+    AlgorithmEnum.topological_sort: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
         'adj': (Stage.INPUT, Location.EDGE, Type.MASK),
@@ -299,7 +302,7 @@ RAW_SPECS = types.MappingProxyType({
         'v': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         's_last': (Stage.HINT, Location.NODE, Type.MASK_ONE),
     },
-    Algorithms.strongly_connected_components: {
+    AlgorithmEnum.strongly_connected_components: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
         'adj': (Stage.INPUT, Location.EDGE, Type.MASK),
@@ -317,7 +320,7 @@ RAW_SPECS = types.MappingProxyType({
         'time': (Stage.HINT, Location.GRAPH, Type.SCALAR),
         'phase': (Stage.HINT, Location.GRAPH, Type.MASK),
     },
-    Algorithms.articulation_points: {
+    AlgorithmEnum.articulation_points: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
         'adj': (Stage.INPUT, Location.EDGE, Type.MASK),
@@ -336,7 +339,7 @@ RAW_SPECS = types.MappingProxyType({
         's_last': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'time': (Stage.HINT, Location.GRAPH, Type.SCALAR),
     },
-    Algorithms.bridges: {
+    AlgorithmEnum.bridges: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
         'adj': (Stage.INPUT, Location.EDGE, Type.MASK),
@@ -354,7 +357,7 @@ RAW_SPECS = types.MappingProxyType({
         's_last': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'time': (Stage.HINT, Location.GRAPH, Type.SCALAR),
     },
-    Algorithms.bfs: {
+    AlgorithmEnum.bfs: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         's': (Stage.INPUT, Location.NODE, Type.MASK_ONE),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
@@ -363,7 +366,7 @@ RAW_SPECS = types.MappingProxyType({
         'reach_h': (Stage.HINT, Location.NODE, Type.MASK),
         'pi_h': (Stage.HINT, Location.NODE, Type.POINTER),
     },
-    Algorithms.mst_kruskal: {
+    AlgorithmEnum.mst_kruskal: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
         'adj': (Stage.INPUT, Location.EDGE, Type.MASK),
@@ -378,7 +381,7 @@ RAW_SPECS = types.MappingProxyType({
         'mask_v': (Stage.HINT, Location.NODE, Type.MASK),
         'phase': (Stage.HINT, Location.GRAPH, Type.CATEGORICAL),
     },
-    Algorithms.mst_prim: {
+    AlgorithmEnum.mst_prim: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         's': (Stage.INPUT, Location.NODE, Type.MASK_ONE),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
@@ -390,7 +393,7 @@ RAW_SPECS = types.MappingProxyType({
         'in_queue': (Stage.HINT, Location.NODE, Type.MASK),
         'u': (Stage.HINT, Location.NODE, Type.MASK_ONE),
     },
-    Algorithms.bellman_ford: {
+    AlgorithmEnum.bellman_ford: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         's': (Stage.INPUT, Location.NODE, Type.MASK_ONE),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
@@ -400,7 +403,7 @@ RAW_SPECS = types.MappingProxyType({
         'd': (Stage.HINT, Location.NODE, Type.SCALAR),
         'msk': (Stage.HINT, Location.NODE, Type.MASK),
     },
-    Algorithms.dag_shortest_paths: {
+    AlgorithmEnum.dag_shortest_paths: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         's': (Stage.INPUT, Location.NODE, Type.MASK_ONE),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
@@ -418,7 +421,7 @@ RAW_SPECS = types.MappingProxyType({
         's_last': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'phase': (Stage.HINT, Location.GRAPH, Type.MASK),
     },
-    Algorithms.dijkstra: {
+    AlgorithmEnum.dijkstra: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         's': (Stage.INPUT, Location.NODE, Type.MASK_ONE),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
@@ -430,7 +433,7 @@ RAW_SPECS = types.MappingProxyType({
         'in_queue': (Stage.HINT, Location.NODE, Type.MASK),
         'u': (Stage.HINT, Location.NODE, Type.MASK_ONE),
     },
-    Algorithms.floyd_warshall: {
+    AlgorithmEnum.floyd_warshall: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
         'adj': (Stage.INPUT, Location.EDGE, Type.MASK),
@@ -440,7 +443,7 @@ RAW_SPECS = types.MappingProxyType({
         'msk': (Stage.HINT, Location.EDGE, Type.MASK),
         'k': (Stage.HINT, Location.NODE, Type.MASK_ONE),
     },
-    Algorithms.bipartite_matching: {
+    AlgorithmEnum.bipartite_matching: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'A': (Stage.INPUT, Location.EDGE, Type.SCALAR),
         'adj': (Stage.INPUT, Location.EDGE, Type.MASK),
@@ -456,7 +459,7 @@ RAW_SPECS = types.MappingProxyType({
         'u': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'phase': (Stage.HINT, Location.GRAPH, Type.MASK),
     },
-    Algorithms.naive_string_matcher: {
+    AlgorithmEnum.naive_string_matcher: {
         'string': (Stage.INPUT, Location.NODE, Type.MASK),
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'key': (Stage.INPUT, Location.NODE, Type.CATEGORICAL),
@@ -466,7 +469,7 @@ RAW_SPECS = types.MappingProxyType({
         'i': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'j': (Stage.HINT, Location.NODE, Type.MASK_ONE),
     },
-    Algorithms.kmp_matcher: {
+    AlgorithmEnum.kmp_matcher: {
         'string': (Stage.INPUT, Location.NODE, Type.MASK),
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'key': (Stage.INPUT, Location.NODE, Type.CATEGORICAL),
@@ -482,7 +485,7 @@ RAW_SPECS = types.MappingProxyType({
         'i': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'phase': (Stage.HINT, Location.GRAPH, Type.MASK),
     },
-    Algorithms.segments_intersect: {
+    AlgorithmEnum.segments_intersect: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'x': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'y': (Stage.INPUT, Location.NODE, Type.SCALAR),
@@ -493,7 +496,7 @@ RAW_SPECS = types.MappingProxyType({
         'dir': (Stage.HINT, Location.NODE, Type.SCALAR),
         'on_seg': (Stage.HINT, Location.NODE, Type.MASK),
     },
-    Algorithms.graham_scan: {
+    AlgorithmEnum.graham_scan: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'x': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'y': (Stage.INPUT, Location.NODE, Type.SCALAR),
@@ -506,7 +509,7 @@ RAW_SPECS = types.MappingProxyType({
         'i': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'phase': (Stage.HINT, Location.GRAPH, Type.CATEGORICAL),
     },
-    Algorithms.jarvis_march: {
+    AlgorithmEnum.jarvis_march: {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'x': (Stage.INPUT, Location.NODE, Type.SCALAR),
         'y': (Stage.INPUT, Location.NODE, Type.SCALAR),

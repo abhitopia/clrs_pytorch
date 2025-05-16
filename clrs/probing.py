@@ -2,7 +2,7 @@ from typing import Any, Dict, ItemsView, Iterator, KeysView, List, NamedTuple, O
 import numpy as np
 import torch
 from torch import Tensor
-from .specs import Location, Stage, Type, OutputClass, Trajectory, Spec
+from .specs import Location, Stage, Type, OutputClass, Trajectory, Spec, Feature
 from .utils import np_one_hot
 
 Array = np.ndarray 
@@ -215,15 +215,15 @@ class ProbesDict:
         hints = sorted(hints, key=lambda x: x.name)
         return inputs, outputs, hints
     
-    def to_trajectory(self, 
+    def to_feature(self, 
                       randomize_pos: bool = False,
                       move_predh_to_input: bool = False, 
                       enforce_permutations: bool = False,
-                      rng: Optional[np.random.RandomState] = None) -> Tuple[Trajectory, Spec]:
+                      rng: Optional[np.random.RandomState] = None) -> Tuple[Feature, Spec]:
         inputs, outputs, hints = self.split_stages()
         num_steps_hint = hints[0].data.shape[0]
-        trajectory = {}
-        spec = {}
+        trajectory: Trajectory = {}
+        spec: Spec = {}
 
         if move_predh_to_input:
             pred_h = hints.pop(hints.index(next(x for x in hints if x.name == 'pred_h')))
@@ -233,18 +233,20 @@ class ProbesDict:
             inputs.append(DataPoint(name='pred_h', location=pred_h.location, type_=pred_h.type_, data=pred_h_data))
 
         for features, stage in zip((inputs, outputs, hints), (Stage.INPUT, Stage.OUTPUT, Stage.HINT)):
-            trajectory[stage] = ({}, num_steps_hint if stage == Stage.HINT else 0)        # stage -> (name -> array, num_steps) 
+            trajectory[stage] = {}       # stage -> (name -> array) 
             features = preprocess_pointer_or_permutations(features, enforce_permutations)
             for dp in features:                   
-                trajectory[stage][0][dp.name] = dp.data
+                trajectory[stage][dp.name] = dp.data
                 if dp.name == 'pos' and randomize_pos:
-                    trajectory[stage][0][dp.name] = randomize_pos_data(dp.data, rng)
+                    trajectory[stage][dp.name] = randomize_pos_data(dp.data, rng)
                 meta = {}
                 if dp.type_ == Type.CATEGORICAL:
                    meta = {'num_classes': dp.data.shape[-1]}
                 spec[dp.name] = (stage, dp.location, dp.type_, meta)
+
+        feature = (trajectory, num_steps_hint)
         
-        return trajectory, spec
+        return feature, spec
 
 
 def randomize_pos_data(data: Array, rng: Optional[np.random.RandomState] = None) -> Array:

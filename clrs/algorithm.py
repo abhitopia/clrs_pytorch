@@ -4,14 +4,14 @@ import hashlib
 import inspect
 import numpy as np
 from typing import Callable, Tuple, Union
-from .specs import RAW_SPECS, HAS_STATIC_HINT, Trajectory, Spec, CLRS30Algorithms, Algorithms
+from .specs import RAW_SPECS, HAS_STATIC_HINT, Feature, Spec, CLRS30Algorithms, AlgorithmEnum
 from .probing import ProbesDict
 from .sampler import SAMPLER_REGISTRY
 from . import algorithms
 
 
 class Algorithm(abc.ABC):
-    def __init__(self, name: Union[str, Algorithms], seed: int=42, 
+    def __init__(self, name: Union[str, AlgorithmEnum], seed: int=42, 
                  randomize_pos: bool=True, 
                  move_predh_to_input: bool=True, 
                  enforce_permutations: bool=True, 
@@ -73,15 +73,15 @@ class Algorithm(abc.ABC):
     @property
     def spec(self) -> Spec:
         if self._spec is None:
-            _, spec = self.sample_trajectory(return_spec=True)
+            _, spec = self.sample_feature(return_spec=True)
             self._spec = spec
         return self._spec
 
-    def sample_trajectory(self, return_spec: bool = False) -> Union[Trajectory, Tuple[Trajectory, Spec]]:
+    def sample_feature(self, return_spec: bool = False) -> Union[Feature, Tuple[Feature, Spec]]:
         sample = self._sampler(self._rng, **self._sampler_kwargs)
         probes: ProbesDict = ProbesDict(RAW_SPECS[self.name])
         _, probes = self.runner(probes, *sample)        
-        trajectory, spec = probes.to_trajectory(
+        feature, spec = probes.to_feature(
             randomize_pos=self._randomize_pos,
             move_predh_to_input=self._move_predh_to_input and self.can_move_predh_to_input,
             enforce_permutations=self._enforce_permutations,
@@ -89,8 +89,8 @@ class Algorithm(abc.ABC):
         )
 
         if return_spec:
-            return trajectory, spec
-        return trajectory
+            return feature, spec
+        return feature
     
     def unique_hash(self):
         """

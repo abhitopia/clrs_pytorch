@@ -7,6 +7,38 @@ import torch
 import itertools
 
 
+def get_mask(valid_count: Tensor, max_count: int, trailing_dims: int = 2) -> Tensor:
+
+    assert valid_count.ndim == 1, "num_nodes must be a 1D tensor"
+
+    if trailing_dims <= 0:
+        raise ValueError("trailing_dims must be a positive integer.")
+    
+    # Create a tensor of shape (max_count,) with values 0 to max_count-1
+    arange_nodes = torch.arange(max_count, device=valid_count.device)
+    
+    # Reshape num_nodes to (batch_size, 1, ..., 1) with num_dims ones
+    valid_count = valid_count.view(-1, *([1] * trailing_dims))
+    
+    # Create a list of views for each dimension
+    # For num_dims=2, this creates [(1, N, 1), (1, 1, N)]
+    # For num_dims=3, this creates [(1, N, 1, 1), (1, 1, N, 1), (1, 1, 1, N)]
+    views = [arange_nodes.view(1, *([1] * i), max_count, *([1] * (trailing_dims - i - 1))) 
+             for i in range(trailing_dims)]
+    
+    # Compare each view with num_nodes and combine using AND
+    # We don't need to stack since broadcasting will handle the different shapes
+    mask = views[0] < valid_count
+    for view in views[1:]:
+        mask = mask & (view < valid_count)
+    
+    return mask
+
+def expand_trailing_dims_as(mask: Tensor, target: Tensor) -> Tensor:
+    unsqueezed_shape = mask.shape + (1,) * (target.ndim - mask.ndim)
+    return mask.view(unsqueezed_shape).expand(target.shape)
+
+
 def default_linear_init(weight: nn.Parameter, bias: Optional[nn.Parameter]) -> None:
     """
     Dynamically choose between LeCun and Xavier Initialisation

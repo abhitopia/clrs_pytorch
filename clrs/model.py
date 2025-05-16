@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 import torch.nn.functional as F
 from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output, OutputClass, AlgorithmEnum, Feature, NumNodes, NumSteps
-from .utils import log_sinkhorn, Linear
+from .utils import log_sinkhorn, Linear, get_mask, expand_trailing_dims_as
 from .processors import GraphFeatures, Processor
 
 
@@ -53,17 +53,6 @@ def get_steps_mask(num_steps: NumSteps, data: Tensor) -> Tensor:
     assert steps_mask.shape == (max_steps, batch_size)
     target_mask_shape = (max_steps, batch_size) + (1,) * (data.dim() - 2)
     return steps_mask.view(target_mask_shape).expand(data.shape)
-
-def get_nodes_mask(num_nodes: NumNodes, node_dim: int) -> Tensor:
-    arange_nodes = torch.arange(node_dim, device=num_nodes.device)
-    row_mask = arange_nodes.view(1, -1, 1) < num_nodes.view(-1, 1, 1)
-    col_mask = arange_nodes.view(1, 1, -1) < num_nodes.view(-1, 1, 1)
-    mask_BNN = row_mask & col_mask
-    return mask_BNN
-
-def expand_as(mask: Tensor, target: Tensor) -> Tensor:
-    unsqueezed_shape = mask.shape + (1,) * (target.ndim - mask.ndim)
-    return mask.view(unsqueezed_shape).expand(target.shape)
 
 class Loss(nn.Module):
     def __init__(self, type_: Type, stage: Stage):
@@ -173,7 +162,7 @@ class Encoder(nn.Module):
                 # Aggregate pointer contributions across sender and receiver nodes.
                 encoding_2 = self.encoders[1](data)
                 sum_2dims = torch.sum(encoding, dim=1) + torch.sum(encoding_2, dim=2)
-                edge_fts += sum_2dims/expand_as(num_nodes, sum_2dims)
+                edge_fts += sum_2dims/expand_trailing_dims_as(num_nodes, sum_2dims)
             else:
                 edge_fts += encoding
         return edge_fts
@@ -614,7 +603,7 @@ class AlgoEncoder(nn.ModuleDict):
         node_dim = input['pos'].shape[1]
         device = input['pos'].device
 
-        node_mask = get_nodes_mask(num_nodes, node_dim)
+        node_mask = get_mask(num_nodes, node_dim, 2)
         graph_features = GraphFeatures.empty(batch_size, node_dim, self.hidden_dim, device=device)
         graph_features.adj_mat = graph_features.adj_mat * node_mask.type_as(graph_features.adj_mat)
 
@@ -966,7 +955,7 @@ if __name__ == "__main__":
     hint_teacher_forcing = 0.0
     dropout = 0.0
 
-    processor = ProcessorFactory.triplet_gmpnn(hidden_dim=hidden_dim, mp_steps=1)
+    processor = ProcessorFactory.triplet_pgn(hidden_dim=hidden_dim, mp_steps=1)
 
     model = Model(specs=ds1.specs,
                   processor=processor,
@@ -976,9 +965,9 @@ if __name__ == "__main__":
     h2_s0 = model.get_hint_at_step(h2, 0)
 
     g1 = GraphFeatures.empty(batch_size, 4, hidden_dim)
-    g1.adj_mat = g1.adj_mat * get_nodes_mask(n1, 4).type_as(g1.adj_mat)
+    g1.adj_mat = g1.adj_mat * get_mask(n1, 4, 2).type_as(g1.adj_mat)
     g2 = GraphFeatures.empty(batch_size, 16, hidden_dim)
-    g2.adj_mat = g2.adj_mat * get_nodes_mask(n2, 16).type_as(g2.adj_mat)
+    g2.adj_mat = g2.adj_mat * get_mask(n2, 16, 2).type_as(g2.adj_mat)
 
     # i1A, i1adj, i1pos, i1s = i1['A'], i1['adj'], i1['pos'], i1['s']
     # i2A, i2adj, i2pos, i2s = i2['A'], i2['adj'], i2['pos'], i2['s']
@@ -1005,10 +994,22 @@ if __name__ == "__main__":
     g1 = model.encoder(i1, h1_s0, n1)
     g2 = model.encoder(i2, h2_s0, n2)
 
+    ps1 = torch.zeros((batch_size, 4, hidden_dim))
+    ps2 = torch.zeros((batch_size, 16, hidden_dim))
+
     assert (g1.adj_mat == g2.adj_mat[:, :4, :4]).all()
     assert (g1.node_fts == g2.node_fts[:, :4, :]).all()
     assert (g1.edge_fts == g2.edge_fts[:, :4, :4, :]).all()
     assert (g1.graph_fts == g2.graph_fts[:, :]).all()
+
+    import ipdb; ipdb.set_trace()
+    nps1, nxe1 = model.processor(g1, processor_state=ps1, num_nodes=n1)
+    nps2, nxe2 = model.processor(g2, processor_state=ps2, num_nodes=n2)
+
+    assert (nps1[:, :, :] == nps2[:, :4, :]).all()
+    import ipdb; ipdb.set_trace()
+    assert torch.allclose(nxe1, nxe2[:, :4, :4, :], rtol=1e-7, atol=1e-6)
+
 
     import ipdb; ipdb.set_trace()
 

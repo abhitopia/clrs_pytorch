@@ -1,13 +1,12 @@
 from enum import Enum
 from typing import List, Optional
-from ..utils import Linear
+from ..utils import Linear, get_mask, expand_trailing_dims_as
 from .base import Processor, GraphFeatures
 from torch import nn
 import torch
 from torch import Tensor
 from typing import Tuple
 import torch.nn.functional as F
-
 
 class Reduction(str, Enum):
     MAX = "max"
@@ -127,7 +126,7 @@ class PGN(Processor):
     def returns_edge_fts(self):
         return self.use_triplets
 
-    def forward(self, graph_features: GraphFeatures, processor_state: Tensor) -> Tuple[Tensor, Optional[Tensor]]:
+    def forward(self, graph_features: GraphFeatures, processor_state: Tensor, num_nodes: Optional[Tensor] = None) -> Tuple[Tensor, Optional[Tensor]]:
         B, N, _ = graph_features.node_fts.size()
         assert processor_state.size(-1) == self.hidden_size, \
             f"Hidden dimension ({processor_state.size(-1)}) must equal out_size ({self.out_size})"
@@ -147,7 +146,14 @@ class PGN(Processor):
             tri_msgs = None
             if self.use_triplets and step == self.mp_steps - 1: # compute higher over triplets only on the last step
                 triplet_tensor = self._compute_triplet_messages(z, graph_features.edge_fts, graph_features.graph_fts) # [B, N, N, N, T]
-                tri_max = triplet_tensor.max(dim=1)[0] # [B, N, N, T]
+                if num_nodes is not None:
+                    mask = expand_trailing_dims_as(get_mask(num_nodes, N, 3), triplet_tensor) # [B, 1, N, N]
+                    triplet_tensor = triplet_tensor.masked_fill(~mask, torch.finfo(triplet_tensor.dtype).min) # [B, N, N, N, T]
+                    tri_max = triplet_tensor.max(dim=1)[0] # [B, N, N, T]
+                    valid = expand_trailing_dims_as(get_mask(num_nodes, N, 2), tri_max).type_as(tri_max) # [B, N, N, T]
+                    tri_max = tri_max * valid # [B, N, N, T]
+                else:
+                    tri_max = triplet_tensor.max(dim=1)[0] # [B, N, N, T]
                 tri_msgs = self.fc_triplet_out(tri_max) # [B, N, N, O]
                 tri_msgs = self.activation(tri_msgs) # [B, N, N, O]
 

@@ -497,7 +497,6 @@ def get_dataset(algos: Union[AlgorithmEnum, List[AlgorithmEnum]],
     if isinstance(trajectory_sizes, int):
         trajectory_sizes = [trajectory_sizes]
 
-    trajectory_sizes = sorted(trajectory_sizes, reverse=True) # Ensure that the largest trajectories are sampled first
     datasets = []
     for algo in algos:
         trajectory_sizes_algo = trajectory_sizes

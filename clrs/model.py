@@ -903,12 +903,26 @@ if __name__ == "__main__":
                       num_samples=100,
                       stacked=False,
                       static_batch_size=False)
+    ds2 = get_dataset(algos=[AlgorithmEnum.matrix_chain_order],
+                      trajectory_sizes=[4, 16],
+                      num_samples=100,
+                      stacked=False,
+                      static_batch_size=True)
     dl1 = ds1.get_dataloader(
         batch_size=32,
         shuffle=False, 
         drop_last=False,
         num_workers=0
     )
+    dl2 = ds2.get_dataloader(
+        batch_size=32,
+        shuffle=False, 
+        drop_last=False,
+        num_workers=0
+    )
+
+    b1, b2 = next(iter(dl1)), next(iter(dl2))
+    import ipdb; ipdb.set_trace()
 
     hidden_dim = 128
     encode_hints = True
@@ -923,8 +937,12 @@ if __name__ == "__main__":
     model = Model(specs=ds1.specs,
                   processor=processor,
                   hidden_dim=hidden_dim)
-    for batch in dl1:
-        predictions, losses, evaluations  = model(batch)
-        # evaluations = model.evaluate(predictions, batch)
-        import pdb; pdb.set_trace()
-        # print(batch)
+    
+    p1, l1, e1 = model(b1)
+    p2, l2, e2 = model(b2)
+    import ipdb; ipdb.set_trace()
+    # for batch in dl1:
+    #     predictions, losses, evaluations  = model(batch)
+    #     # evaluations = model.evaluate(predictions, batch)
+    #     import pdb; pdb.set_trace()
+    #     # print(batch)

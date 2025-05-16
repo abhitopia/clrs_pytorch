@@ -2,7 +2,9 @@
 - [x] Implement static batch size on both hint_steps and num_nodes for each algo dataset
 - [x] Fix evaluator to take the num_steps and apply the mask to the hints
 - [x] Set up passing static batch to the model
-- [ ] Ament feature to contain
+- [x] Ament feature to contain nb_nodes
+- [ ] Make evaluations mean sin batch dim
+- [ ] Set up encoder comparison
 - [ ] Test that adjacency matrix is correctly computed on static batches
 - [ ] Pass the num nodes to the model
 - [ ] Ensure that the output for static batch matches the non-static batch

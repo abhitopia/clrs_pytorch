@@ -99,13 +99,15 @@ class Loss(nn.Module):
     def forward(self, pred: Tensor, target: Tensor, num_steps: Optional[Tensor] = None) -> Tensor:
         loss, mask = self.get_loss(pred, target)
         assert loss.shape == mask.shape, f"loss.shape: {loss.shape}, mask.shape: {mask.shape}"
+        dim = tuple(range(1, loss.ndim))
         
         if self.stage == Stage.HINT:
             assert num_steps is not None
             steps_mask = get_steps_mask(num_steps, loss).type_as(mask)
             mask = steps_mask * mask
+            dim = (0,) + tuple(range(2, loss.ndim))
 
-        loss = torch.sum(loss * mask) / (torch.sum(mask) + 1e-8)
+        loss = torch.sum(loss * mask, dim=dim) / (torch.sum(mask, dim=dim) + 1e-8)
         return loss
 
 class Encoder(nn.Module):
@@ -795,7 +797,7 @@ class AlgoModel(torch.nn.Module):
         return output
 
     def forward(self, feature: Feature) -> Tuple[Trajectory, Trajectory, Trajectory]:
-        trajectory, num_steps = feature[0], feature[1]
+        trajectory, num_steps, num_nodes = feature[0], feature[1], feature[2]
         input, hints, output = trajectory[Stage.INPUT], trajectory[Stage.HINT], trajectory[Stage.OUTPUT]
 
         prediction: Trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
@@ -898,14 +900,14 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader
     from .processors import ProcessorFactory
 
-    ds1 = get_dataset(algos=[AlgorithmEnum.matrix_chain_order],
-                      trajectory_sizes=[4, 16],
-                      num_samples=100,
+    ds1 = get_dataset(algos=[AlgorithmEnum.bfs],
+                      trajectory_sizes=[4],
+                      num_samples=200,
                       stacked=False,
                       static_batch_size=False)
-    ds2 = get_dataset(algos=[AlgorithmEnum.matrix_chain_order],
+    ds2 = get_dataset(algos=[AlgorithmEnum.bfs],
                       trajectory_sizes=[4, 16],
-                      num_samples=100,
+                      num_samples=200,
                       stacked=False,
                       static_batch_size=True)
     dl1 = ds1.get_dataloader(

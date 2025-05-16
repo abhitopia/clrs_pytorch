@@ -3,6 +3,9 @@
 - [x] Fix evaluator to take the num_steps and apply the mask to the hints
 - [x] Set up passing static batch to the model
 - [x] Ament feature to contain nb_nodes
+- [x] Expand dims method
+- [x] Encoding works on static_batch!! 
+- [ ] Refactor steps mask
 - [ ] Make evaluations mean sin batch dim
 - [ ] Set up encoder comparison
 - [ ] Test that adjacency matrix is correctly computed on static batches

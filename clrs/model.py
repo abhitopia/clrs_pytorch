@@ -61,6 +61,9 @@ def get_nodes_mask(num_nodes: NumNodes, node_dim: int) -> Tensor:
     mask_BNN = row_mask & col_mask
     return mask_BNN
 
+def expand_as(mask: Tensor, target: Tensor) -> Tensor:
+    unsqueezed_shape = mask.shape + (1,) * (target.ndim - mask.ndim)
+    return mask.view(unsqueezed_shape).expand(target.shape)
 
 class Loss(nn.Module):
     def __init__(self, type_: Type, stage: Stage):
@@ -157,7 +160,7 @@ class Encoder(nn.Module):
             node_fts += encoding
         return node_fts
 
-    def encode_to_edge_fts(self, data: Tensor, edge_fts: Tensor, node_mask: Tensor) -> Tensor:
+    def encode_to_edge_fts(self, data: Tensor, edge_fts: Tensor, num_nodes: Tensor) -> Tensor:
         if self.type_ != Type.CATEGORICAL:
             data = data.unsqueeze(-1)
 
@@ -169,8 +172,8 @@ class Encoder(nn.Module):
             if self.type_ == Type.POINTER:
                 # Aggregate pointer contributions across sender and receiver nodes.
                 encoding_2 = self.encoders[1](data)
-                import ipdb; ipdb.set_trace()
-                edge_fts += torch.mean(encoding, dim=1) + torch.mean(encoding_2, dim=2)
+                sum_2dims = torch.sum(encoding, dim=1) + torch.sum(encoding_2, dim=2)
+                edge_fts += sum_2dims/expand_as(num_nodes, sum_2dims)
             else:
                 edge_fts += encoding
         return edge_fts
@@ -183,10 +186,10 @@ class Encoder(nn.Module):
             graph_fts += encoding
         return graph_fts
 
-    def encode(self, data: Tensor, graph_features: GraphFeatures = None, node_mask: Tensor = None) -> GraphFeatures:
+    def encode(self, data: Tensor, graph_features: GraphFeatures = None, num_nodes: Tensor = None) -> GraphFeatures:
         graph_features.adj_mat = self.encode_to_adj_mat(data, graph_features.adj_mat)
         graph_features.node_fts = self.encode_to_node_fts(data, graph_features.node_fts)
-        graph_features.edge_fts = self.encode_to_edge_fts(data, graph_features.edge_fts, node_mask)
+        graph_features.edge_fts = self.encode_to_edge_fts(data, graph_features.edge_fts, num_nodes)
         graph_features.graph_fts = self.encode_to_graph_fts(data, graph_features.graph_fts)
         return graph_features
 
@@ -616,11 +619,11 @@ class AlgoEncoder(nn.ModuleDict):
         graph_features.adj_mat = graph_features.adj_mat * node_mask.type_as(graph_features.adj_mat)
 
         for name, data in input.items():
-            graph_features = self.encoders[Stage.INPUT][name].encode(data, graph_features, node_mask)
+            graph_features = self.encoders[Stage.INPUT][name].encode(data, graph_features, num_nodes)
 
         if self.encode_hints:
             for name, data in step_hints.items():
-                graph_features = self.encoders[Stage.HINT][name].encode(data, graph_features, node_mask)
+                graph_features = self.encoders[Stage.HINT][name].encode(data, graph_features, num_nodes)
 
         return graph_features
     
@@ -910,13 +913,16 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader
     from .processors import ProcessorFactory
 
-    ds1 = get_dataset(algos=[AlgorithmEnum.bfs],
+    algo = 'matrix_chain_order'
+    algos = [AlgorithmEnum.matrix_chain_order]
+
+    ds1 = get_dataset(algos=algos,
                       trajectory_sizes=[4],
                       num_samples=200,
                       stacked=False,
                       generate_on_the_fly=False,
                       static_batch_size=False)
-    ds2 = get_dataset(algos=[AlgorithmEnum.bfs],
+    ds2 = get_dataset(algos=algos,
                       trajectory_sizes=[4, 16],
                       num_samples=200,
                       stacked=False,
@@ -924,7 +930,7 @@ if __name__ == "__main__":
                       static_batch_size=True)
     
     
-    batch_size = 1
+    batch_size = 32
     dl1 = ds1.get_dataloader(
         batch_size=batch_size,
         shuffle=False, 
@@ -939,7 +945,7 @@ if __name__ == "__main__":
     )
 
     b1, b2 = next(iter(dl1)), next(iter(dl2))
-    algo = 'bfs'
+    # algo = 'bfs'
 
     spec = ds1.specs[algo]
     b1 = b1[algo]
@@ -974,32 +980,35 @@ if __name__ == "__main__":
     g2 = GraphFeatures.empty(batch_size, 16, hidden_dim)
     g2.adj_mat = g2.adj_mat * get_nodes_mask(n2, 16).type_as(g2.adj_mat)
 
-    i1A, i1adj, i1pos, i1s = i1['A'], i1['adj'], i1['pos'], i1['s']
-    i2A, i2adj, i2pos, i2s = i2['A'], i2['adj'], i2['pos'], i2['s']
-    h1pi_h, h1reach_h = h1_s0['pi_h'], h1_s0['reach_h']
-    h2pi_h, h2reach_h = h2_s0['pi_h'], h2_s0['reach_h']
+    # i1A, i1adj, i1pos, i1s = i1['A'], i1['adj'], i1['pos'], i1['s']
+    # i2A, i2adj, i2pos, i2s = i2['A'], i2['adj'], i2['pos'], i2['s']
+    # h1pi_h, h1reach_h = h1_s0['pi_h'], h1_s0['reach_h']
+    # h2pi_h, h2reach_h = h2_s0['pi_h'], h2_s0['reach_h']
 
     # model.encoder(i1, h1_s0, n1)
     # model.encoder(i2, h2_s0, n2)
     import ipdb; ipdb.set_trace()
-    model.encoder.encoders[Stage.INPUT]['A'].encode(i1A, g1)
-    model.encoder.encoders[Stage.INPUT]['A'].encode(i2A, g2)
-    model.encoder.encoders[Stage.INPUT]['adj'].encode(i1adj, g1)
-    model.encoder.encoders[Stage.INPUT]['adj'].encode(i2adj, g2)
-    model.encoder.encoders[Stage.INPUT]['pos'].encode(i1pos, g1)
-    model.encoder.encoders[Stage.INPUT]['pos'].encode(i2pos, g2)
-    model.encoder.encoders[Stage.INPUT]['s'].encode(i1s, g1)
-    model.encoder.encoders[Stage.INPUT]['s'].encode(i2s, g2)
-    model.encoder.encoders[Stage.HINT]['pi_h'].encode(h1pi_h, g1)
-    model.encoder.encoders[Stage.HINT]['pi_h'].encode(h2pi_h, g2)
-    model.encoder.encoders[Stage.HINT]['reach_h'].encode(h1reach_h, g1)
-    model.encoder.encoders[Stage.HINT]['reach_h'].encode(h2reach_h, g2)
+    # model.encoder.encoders[Stage.INPUT]['A'].encode(i1A, g1)
+    # model.encoder.encoders[Stage.INPUT]['A'].encode(i2A, g2)
+    # model.encoder.encoders[Stage.INPUT]['adj'].encode(i1adj, g1)
+    # model.encoder.encoders[Stage.INPUT]['adj'].encode(i2adj, g2)
+    # model.encoder.encoders[Stage.INPUT]['pos'].encode(i1pos, g1)
+    # model.encoder.encoders[Stage.INPUT]['pos'].encode(i2pos, g2)
+    # model.encoder.encoders[Stage.INPUT]['s'].encode(i1s, g1)
+    # model.encoder.encoders[Stage.INPUT]['s'].encode(i2s, g2)
+    # model.encoder.encoders[Stage.HINT]['pi_h'].encode(h1pi_h, g1)
+    # model.encoder.encoders[Stage.HINT]['pi_h'].encode(h2pi_h, g2)
+    # model.encoder.encoders[Stage.HINT]['reach_h'].encode(h1reach_h, g1)
+    # model.encoder.encoders[Stage.HINT]['reach_h'].encode(h2reach_h, g2)
 
+
+    g1 = model.encoder(i1, h1_s0, n1)
+    g2 = model.encoder(i2, h2_s0, n2)
 
     assert (g1.adj_mat == g2.adj_mat[:, :4, :4]).all()
     assert (g1.node_fts == g2.node_fts[:, :4, :]).all()
     assert (g1.edge_fts == g2.edge_fts[:, :4, :4, :]).all()
-    assert (g1.graph_fts == g2.graph_fts[:4, :]).all()
+    assert (g1.graph_fts == g2.graph_fts[:, :]).all()
 
     import ipdb; ipdb.set_trace()
 

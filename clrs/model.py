@@ -956,7 +956,7 @@ if __name__ == "__main__":
     dropout = 0.0
 
 
-    process_classes = [p for p in list(ProcessorFactory) if 'gat' not in p.name and 'triplet' not in p.name]
+    process_classes = [p for p in list(ProcessorFactory) if 'gat' not  in p.name]
 
     import ipdb; ipdb.set_trace()
     for processor_cls in process_classes:
@@ -1003,21 +1003,33 @@ if __name__ == "__main__":
         ps2 = torch.zeros((batch_size, 16, hidden_dim))
 
         assert (g1.adj_mat == g2.adj_mat[:, :4, :4]).all()
+        assert (g2.adj_mat[:, :4, 4:] == 0).all()
+        assert (g2.adj_mat[:, 4:, :4] == 0).all()
+        assert (g2.adj_mat[:, 4:, 4:] == 0).all()
         assert (g1.node_fts == g2.node_fts[:, :4, :]).all()
+        assert (g1.node_fts[:, 4:, :] == 0).all()
         assert (g1.edge_fts == g2.edge_fts[:, :4, :4, :]).all()
+        assert (g1.edge_fts[:, 4:, :4, :] == 0).all()
+        assert (g1.edge_fts[:, :4, 4:, :] == 0).all()
+        assert (g1.edge_fts[:, 4:, 4:, :] == 0).all()
         assert (g1.graph_fts == g2.graph_fts[:, :]).all()
 
         # import ipdb; ipdb.set_trace()
-        nps1, nxe1 = model.processor(g1, processor_state=ps1, num_nodes=n1)
+        nps1, nxe1 = model.processor(g1, processor_state=ps1, num_nodes=None)
+
+        print('-'*30)
         nps2, nxe2 = model.processor(g2, processor_state=ps2, num_nodes=n2)
 
         assert (nps1[:, :, :] == nps2[:, :4, :]).all()
+        assert (nps1[:, 4:, :] == 0).all()
 
         if nxe1 is None: 
             assert nxe2 is None
         else:
             assert (nxe1 == nxe2[:, :4, :4, :]).all()
-            # assert torch.allclose(nxe1, nxe2[:, :4, :4, :], rtol=1e-7, atol=1e-6)
+            assert (nxe1[:, 4:, :4, :] == 0).all()
+            assert (nxe1[:, :4, 4:, :] == 0).all()
+            assert (nxe1[:, 4:, 4:, :] == 0).all()
 
 
     # import ipdb; ipdb.set_trace()

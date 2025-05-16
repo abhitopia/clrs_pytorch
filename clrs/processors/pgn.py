@@ -147,13 +147,19 @@ class PGN(Processor):
             if self.use_triplets and step == self.mp_steps - 1: # compute higher over triplets only on the last step
                 triplet_tensor = self._compute_triplet_messages(z, graph_features.edge_fts, graph_features.graph_fts) # [B, N, N, N, T]
                 if num_nodes is not None:
-                    mask = expand_trailing_dims_as(get_mask(num_nodes, N, 3), triplet_tensor) # [B, 1, N, N]
-                    triplet_tensor = triplet_tensor.masked_fill(~mask, torch.finfo(triplet_tensor.dtype).min) # [B, N, N, N, T]
-                    tri_max = triplet_tensor.max(dim=1)[0] # [B, N, N, T]
-                    valid = expand_trailing_dims_as(get_mask(num_nodes, N, 2), tri_max).type_as(tri_max) # [B, N, N, T]
-                    tri_max = tri_max * valid # [B, N, N, T]
+                    # Create mask for valid nodes and apply it consistently
+                    node_mask = get_mask(num_nodes, N, 1) # [B, N]
+                    triplet_mask = expand_trailing_dims_as(node_mask, triplet_tensor) # [B, N, N, N, T]                    
+                    # Apply mask and ensure consistent numerical behavior regardless of padding
+                    masked_triplet = triplet_tensor.masked_fill(~triplet_mask, float("-inf"))
+                    # Take max over the first dimension
+                    tri_max, _ = masked_triplet.max(dim=1) # [B, N, N, T]
+                    # Apply mask to output
+                    edge_mask = expand_trailing_dims_as(node_mask, tri_max) # [B, N, N, T]
+                    tri_max = tri_max.masked_fill(~edge_mask, torch.tensor(0.0, dtype=tri_max.dtype, device=tri_max.device))
                 else:
-                    tri_max = triplet_tensor.max(dim=1)[0] # [B, N, N, T]
+                    tri_max = triplet_tensor.max(dim=1)[0] # [B, N, N, T]            
+                
                 tri_msgs = self.fc_triplet_out(tri_max) # [B, N, N, O]
                 tri_msgs = self.activation(tri_msgs) # [B, N, N, O]
 
@@ -207,9 +213,9 @@ class PGN(Processor):
         tri_e1 = self.triplet_fc_e1(edge_feats) # [B, N, N, T]
         tri_e2 = self.triplet_fc_e2(edge_feats) # [B, N, N, T]
         tri_e3 = self.triplet_fc_e3(edge_feats) # [B, N, N, T]
-        tri_g = self.triplet_fc_g(graph_feats) # [B, N, T]
+        tri_g = self.triplet_fc_g(graph_feats) # [B, T]
 
-        return (
+        result =  (
             tri_z1.unsqueeze(2).unsqueeze(3) +              # [B, N, 1, 1, T]
             tri_z2.unsqueeze(1).unsqueeze(3) +              # [B, 1, N, 1, T]
             tri_z3.unsqueeze(1).unsqueeze(2) +              # [B, 1, 1, N, T]
@@ -218,7 +224,7 @@ class PGN(Processor):
             tri_e3.unsqueeze(1) +                           # [B, 1, N, N, T]
             tri_g.unsqueeze(1).unsqueeze(2).unsqueeze(3)    # [B, 1, 1, 1, T]
         )
-        
+        return result
         
 class DeepSets(PGN):
     """
@@ -234,7 +240,7 @@ class DeepSets(PGN):
             fully_connected = fully_connected * valid
 
         graph_features.adj_mat = fully_connected * torch.eye(graph_features.adj_mat.size(-1))
-        return super().forward(graph_features, processor_state)
+        return super().forward(graph_features, processor_state, num_nodes)
     
 
 class MPNN(PGN):
@@ -246,7 +252,7 @@ class MPNN(PGN):
         if num_nodes is not None:
             valid = get_mask(num_nodes, graph_features.adj_mat.size(-1), 2).type_as(graph_features.adj_mat)
             graph_features.adj_mat = graph_features.adj_mat * valid
-        return super().forward(graph_features, processor_state) 
+        return super().forward(graph_features, processor_state, num_nodes) 
     
 class PGNMask(PGN):
   """Masked Pointer Graph Networks (Veličković et al., NeurIPS 2020)."""

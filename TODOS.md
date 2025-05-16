@@ -9,8 +9,9 @@
 - [x] Set up encoder comparison
 - [x] Test that adjacency matrix is correctly computed on static batches
 - [x] Pass the num nodes to the model
-- [ ] Test all pgn models
+- [x] Test all pgn models
 - [ ] Test all gat models
+- [ ] Add device to get mask
 - [ ] Make decoder work on static batches
 - [ ] Make evaluations mean sin batch dim
 - [ ] Ensure that the output for static batch matches the non-static batch

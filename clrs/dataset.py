@@ -56,7 +56,6 @@ def batch_features(spec: Spec, features: List[Feature], min_hint_steps: int = 0,
         stage, _, type_, metadata = spec[name]
         dim_paddings = []
         if stage == Stage.HINT:
-            # data = apply_pad(data)
             dim_paddings.append((0, padded_hint_steps - data.shape[0]))  # For the time dimension
         dim_paddings.append((0, 0))                                      # For the batch dimension
 
@@ -448,7 +447,7 @@ def get_dataset(algos: Union[AlgorithmEnum, List[AlgorithmEnum]],
                 num_samples: int = 1000,
                 trajectory_sizes: Union[int, List[int]] = [4, 7, 11, 13, 16],
                 cache_dir: Optional[Union[str, Path]] = None,
-                generate_on_the_fly: bool = True,
+                generate_on_the_fly: bool = False,
                 static_batch_size: bool = True,
                 stacked: bool = False,
                 **algo_kwargs) -> StackedAlgoFeatureDataset:

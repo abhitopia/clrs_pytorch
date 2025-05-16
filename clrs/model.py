@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 import torch.nn.functional as F
-from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output, OutputClass, AlgorithmEnum, Feature
+from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output, OutputClass, AlgorithmEnum, Feature, NumNodes, NumSteps
 from .utils import log_sinkhorn, Linear
 from .processors import GraphFeatures, Processor
 
@@ -46,13 +46,20 @@ class ReconstMode(str, Enum):
     HARD_ON_EVAL = "hard_on_eval"
 
 
-def get_steps_mask(num_steps: Tensor, data: Tensor) -> Tensor:
+def get_steps_mask(num_steps: NumSteps, data: Tensor) -> Tensor:
     max_steps = data.shape[0]
     batch_size = num_steps.shape[0]
     steps_mask = num_steps > (torch.arange(max_steps, device=num_steps.device).unsqueeze(1) + 1)
     assert steps_mask.shape == (max_steps, batch_size)
     target_mask_shape = (max_steps, batch_size) + (1,) * (data.dim() - 2)
     return steps_mask.view(target_mask_shape).expand(data.shape)
+
+def get_nodes_mask(num_nodes: NumNodes, node_dim: int) -> Tensor:
+    arange_nodes = torch.arange(node_dim, device=num_nodes.device)
+    row_mask = arange_nodes.view(1, -1, 1) < num_nodes.view(-1, 1, 1)
+    col_mask = arange_nodes.view(1, 1, -1) < num_nodes.view(-1, 1, 1)
+    mask_BNN = row_mask & col_mask
+    return mask_BNN
 
 
 class Loss(nn.Module):
@@ -150,7 +157,7 @@ class Encoder(nn.Module):
             node_fts += encoding
         return node_fts
 
-    def encode_to_edge_fts(self, data: Tensor, edge_fts: Tensor) -> Tensor:
+    def encode_to_edge_fts(self, data: Tensor, edge_fts: Tensor, node_mask: Tensor) -> Tensor:
         if self.type_ != Type.CATEGORICAL:
             data = data.unsqueeze(-1)
 
@@ -162,6 +169,7 @@ class Encoder(nn.Module):
             if self.type_ == Type.POINTER:
                 # Aggregate pointer contributions across sender and receiver nodes.
                 encoding_2 = self.encoders[1](data)
+                import ipdb; ipdb.set_trace()
                 edge_fts += torch.mean(encoding, dim=1) + torch.mean(encoding_2, dim=2)
             else:
                 edge_fts += encoding
@@ -175,10 +183,10 @@ class Encoder(nn.Module):
             graph_fts += encoding
         return graph_fts
 
-    def encode(self, data: Tensor, graph_features: GraphFeatures = None) -> GraphFeatures:
+    def encode(self, data: Tensor, graph_features: GraphFeatures = None, node_mask: Tensor = None) -> GraphFeatures:
         graph_features.adj_mat = self.encode_to_adj_mat(data, graph_features.adj_mat)
         graph_features.node_fts = self.encode_to_node_fts(data, graph_features.node_fts)
-        graph_features.edge_fts = self.encode_to_edge_fts(data, graph_features.edge_fts)
+        graph_features.edge_fts = self.encode_to_edge_fts(data, graph_features.edge_fts, node_mask)
         graph_features.graph_fts = self.encode_to_graph_fts(data, graph_features.graph_fts)
         return graph_features
 
@@ -598,18 +606,21 @@ class AlgoEncoder(nn.ModuleDict):
             elif stage == Stage.HINT and self.encode_hints:
                 self.encoders[Stage.HINT].add_module(name, encoder)
 
-    def forward(self, input: Input, step_hints: Hints) -> GraphFeatures:
-        batch_size = next(iter(input.values())).shape[0]
-        nb_nodes = next(iter(input.values())).shape[1]
-        device = next(iter(input.values())).device
-        graph_features = GraphFeatures.empty(batch_size, nb_nodes, self.hidden_dim, device=device)
+    def forward(self, input: Input, step_hints: Hints, num_nodes: Tensor) -> GraphFeatures:
+        batch_size = input['pos'].shape[0]
+        node_dim = input['pos'].shape[1]
+        device = input['pos'].device
+
+        node_mask = get_nodes_mask(num_nodes, node_dim)
+        graph_features = GraphFeatures.empty(batch_size, node_dim, self.hidden_dim, device=device)
+        graph_features.adj_mat = graph_features.adj_mat * node_mask.type_as(graph_features.adj_mat)
 
         for name, data in input.items():
-            graph_features = self.encoders[Stage.INPUT][name].encode(data, graph_features)
+            graph_features = self.encoders[Stage.INPUT][name].encode(data, graph_features, node_mask)
 
         if self.encode_hints:
             for name, data in step_hints.items():
-                graph_features = self.encoders[Stage.HINT][name].encode(data, graph_features)
+                graph_features = self.encoders[Stage.HINT][name].encode(data, graph_features, node_mask)
 
         return graph_features
     
@@ -716,11 +727,12 @@ class AlgoModel(torch.nn.Module):
     def step(self, 
              input: Input, 
              step_hint: Hints, 
+             num_nodes: NumNodes, 
              processor_state: Tensor, # Processor's h_{t-1} for this step
              lstm_state: Optional[LSTMState] = None # LSTM's (h,c) from previous step
              ) -> Tuple[Output, Hints, Tensor, Optional[LSTMState]]:
         
-        graph_features: GraphFeatures = self.encoder(input, step_hint)
+        graph_features: GraphFeatures = self.encoder(input, step_hint, num_nodes)
 
         nxt_processor_state, nxt_edge = processor_state, None 
         nxt_processor_state, nxt_edge = self.processor(
@@ -823,6 +835,7 @@ class AlgoModel(torch.nn.Module):
             prediction_step, raw_prediction_step, processor_state, lstm_state = self.step(
                 input=input,
                 step_hint=hints_at_step,
+                num_nodes=num_nodes,
                 processor_state=processor_state,          
                 lstm_state=lstm_state                     
             )
@@ -835,9 +848,6 @@ class AlgoModel(torch.nn.Module):
             raw_prediction[Stage.OUTPUT] = self.merge_predicted_output(output=raw_prediction[Stage.OUTPUT], 
                                                     predicted_output=raw_prediction_step[Stage.OUTPUT], 
                                                     not_done_mask=(num_steps > (step_idx + 1)))
-        
-
-
 
         # first target hint is never predicted
         # predicted hints are shifted by one step, and the first predicted hint is actually second target hint
@@ -904,27 +914,43 @@ if __name__ == "__main__":
                       trajectory_sizes=[4],
                       num_samples=200,
                       stacked=False,
+                      generate_on_the_fly=False,
                       static_batch_size=False)
     ds2 = get_dataset(algos=[AlgorithmEnum.bfs],
                       trajectory_sizes=[4, 16],
                       num_samples=200,
                       stacked=False,
+                      generate_on_the_fly=False,
                       static_batch_size=True)
+    
+    
+    batch_size = 1
     dl1 = ds1.get_dataloader(
-        batch_size=32,
+        batch_size=batch_size,
         shuffle=False, 
         drop_last=False,
         num_workers=0
     )
     dl2 = ds2.get_dataloader(
-        batch_size=32,
+        batch_size=batch_size,
         shuffle=False, 
         drop_last=False,
         num_workers=0
     )
 
     b1, b2 = next(iter(dl1)), next(iter(dl2))
-    import ipdb; ipdb.set_trace()
+    algo = 'bfs'
+
+    spec = ds1.specs[algo]
+    b1 = b1[algo]
+    b2 = b2[algo]
+    t1, s1, n1 = b1[0], b1[1], b1[2]
+    t2, s2, n2 = b2[0], b2[1], b2[2]
+    i1, h1, o1 = t1[Stage.INPUT], t1[Stage.HINT], t1[Stage.OUTPUT]
+    i2, h2, o2 = t2[Stage.INPUT], t2[Stage.HINT], t2[Stage.OUTPUT]
+
+    from rich import print
+    print(spec)
 
     hidden_dim = 128
     encode_hints = True
@@ -938,9 +964,48 @@ if __name__ == "__main__":
 
     model = Model(specs=ds1.specs,
                   processor=processor,
-                  hidden_dim=hidden_dim)
+                  hidden_dim=hidden_dim).models[algo]
+    
+    h1_s0 = model.get_hint_at_step(h1, 0)
+    h2_s0 = model.get_hint_at_step(h2, 0)
+
+    g1 = GraphFeatures.empty(batch_size, 4, hidden_dim)
+    g1.adj_mat = g1.adj_mat * get_nodes_mask(n1, 4).type_as(g1.adj_mat)
+    g2 = GraphFeatures.empty(batch_size, 16, hidden_dim)
+    g2.adj_mat = g2.adj_mat * get_nodes_mask(n2, 16).type_as(g2.adj_mat)
+
+    i1A, i1adj, i1pos, i1s = i1['A'], i1['adj'], i1['pos'], i1['s']
+    i2A, i2adj, i2pos, i2s = i2['A'], i2['adj'], i2['pos'], i2['s']
+    h1pi_h, h1reach_h = h1_s0['pi_h'], h1_s0['reach_h']
+    h2pi_h, h2reach_h = h2_s0['pi_h'], h2_s0['reach_h']
+
+    # model.encoder(i1, h1_s0, n1)
+    # model.encoder(i2, h2_s0, n2)
+    import ipdb; ipdb.set_trace()
+    model.encoder.encoders[Stage.INPUT]['A'].encode(i1A, g1)
+    model.encoder.encoders[Stage.INPUT]['A'].encode(i2A, g2)
+    model.encoder.encoders[Stage.INPUT]['adj'].encode(i1adj, g1)
+    model.encoder.encoders[Stage.INPUT]['adj'].encode(i2adj, g2)
+    model.encoder.encoders[Stage.INPUT]['pos'].encode(i1pos, g1)
+    model.encoder.encoders[Stage.INPUT]['pos'].encode(i2pos, g2)
+    model.encoder.encoders[Stage.INPUT]['s'].encode(i1s, g1)
+    model.encoder.encoders[Stage.INPUT]['s'].encode(i2s, g2)
+    model.encoder.encoders[Stage.HINT]['pi_h'].encode(h1pi_h, g1)
+    model.encoder.encoders[Stage.HINT]['pi_h'].encode(h2pi_h, g2)
+    model.encoder.encoders[Stage.HINT]['reach_h'].encode(h1reach_h, g1)
+    model.encoder.encoders[Stage.HINT]['reach_h'].encode(h2reach_h, g2)
+
+
+    assert (g1.adj_mat == g2.adj_mat[:, :4, :4]).all()
+    assert (g1.node_fts == g2.node_fts[:, :4, :]).all()
+    assert (g1.edge_fts == g2.edge_fts[:, :4, :4, :]).all()
+    assert (g1.graph_fts == g2.graph_fts[:4, :]).all()
+
+    import ipdb; ipdb.set_trace()
+
     
     p1, l1, e1 = model(b1)
+    print("///"*100)
     p2, l2, e2 = model(b2)
     import ipdb; ipdb.set_trace()
     # for batch in dl1:

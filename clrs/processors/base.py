@@ -44,7 +44,7 @@ class Processor(nn.Module, metaclass=abc.ABCMeta):
         Processes the graph features.
 
         Args:
-            graph_features: Graph features.
+            graph_features: Graph features. 
             processor_state: Processor state from the previous step.
 
         Returns:

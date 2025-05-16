@@ -955,69 +955,78 @@ if __name__ == "__main__":
     hint_teacher_forcing = 0.0
     dropout = 0.0
 
-    processor = ProcessorFactory.triplet_pgn(hidden_dim=hidden_dim, mp_steps=1)
 
-    model = Model(specs=ds1.specs,
-                  processor=processor,
-                  hidden_dim=hidden_dim).models[algo]
+    process_classes = [p for p in list(ProcessorFactory) if 'gat' not in p.name and 'triplet' not in p.name]
+
+    import ipdb; ipdb.set_trace()
+    for processor_cls in process_classes:
+        print('Testing', processor_cls.name)
+        processor = processor_cls(hidden_dim=hidden_dim, mp_steps=1)
+        model = Model(specs=ds1.specs,
+                    processor=processor,
+                    hidden_dim=hidden_dim).models[algo]
+        
+        h1_s0 = model.get_hint_at_step(h1, 0)
+        h2_s0 = model.get_hint_at_step(h2, 0)
+
+        g1 = GraphFeatures.empty(batch_size, 4, hidden_dim)
+        g1.adj_mat = g1.adj_mat * get_mask(n1, 4, 2).type_as(g1.adj_mat)
+        g2 = GraphFeatures.empty(batch_size, 16, hidden_dim)
+        g2.adj_mat = g2.adj_mat * get_mask(n2, 16, 2).type_as(g2.adj_mat)
+
+        # i1A, i1adj, i1pos, i1s = i1['A'], i1['adj'], i1['pos'], i1['s']
+        # i2A, i2adj, i2pos, i2s = i2['A'], i2['adj'], i2['pos'], i2['s']
+        # h1pi_h, h1reach_h = h1_s0['pi_h'], h1_s0['reach_h']
+        # h2pi_h, h2reach_h = h2_s0['pi_h'], h2_s0['reach_h']
+
+        # model.encoder(i1, h1_s0, n1)
+        # model.encoder(i2, h2_s0, n2)
+        # import ipdb; ipdb.set_trace()
+        # model.encoder.encoders[Stage.INPUT]['A'].encode(i1A, g1)
+        # model.encoder.encoders[Stage.INPUT]['A'].encode(i2A, g2)
+        # model.encoder.encoders[Stage.INPUT]['adj'].encode(i1adj, g1)
+        # model.encoder.encoders[Stage.INPUT]['adj'].encode(i2adj, g2)
+        # model.encoder.encoders[Stage.INPUT]['pos'].encode(i1pos, g1)
+        # model.encoder.encoders[Stage.INPUT]['pos'].encode(i2pos, g2)
+        # model.encoder.encoders[Stage.INPUT]['s'].encode(i1s, g1)
+        # model.encoder.encoders[Stage.INPUT]['s'].encode(i2s, g2)
+        # model.encoder.encoders[Stage.HINT]['pi_h'].encode(h1pi_h, g1)
+        # model.encoder.encoders[Stage.HINT]['pi_h'].encode(h2pi_h, g2)
+        # model.encoder.encoders[Stage.HINT]['reach_h'].encode(h1reach_h, g1)
+        # model.encoder.encoders[Stage.HINT]['reach_h'].encode(h2reach_h, g2)
+
+
+        g1 = model.encoder(i1, h1_s0, n1)
+        g2 = model.encoder(i2, h2_s0, n2)
+
+        ps1 = torch.zeros((batch_size, 4, hidden_dim))
+        ps2 = torch.zeros((batch_size, 16, hidden_dim))
+
+        assert (g1.adj_mat == g2.adj_mat[:, :4, :4]).all()
+        assert (g1.node_fts == g2.node_fts[:, :4, :]).all()
+        assert (g1.edge_fts == g2.edge_fts[:, :4, :4, :]).all()
+        assert (g1.graph_fts == g2.graph_fts[:, :]).all()
+
+        # import ipdb; ipdb.set_trace()
+        nps1, nxe1 = model.processor(g1, processor_state=ps1, num_nodes=n1)
+        nps2, nxe2 = model.processor(g2, processor_state=ps2, num_nodes=n2)
+
+        assert (nps1[:, :, :] == nps2[:, :4, :]).all()
+
+        if nxe1 is None: 
+            assert nxe2 is None
+        else:
+            assert (nxe1 == nxe2[:, :4, :4, :]).all()
+            # assert torch.allclose(nxe1, nxe2[:, :4, :4, :], rtol=1e-7, atol=1e-6)
+
+
+    # import ipdb; ipdb.set_trace()
+
     
-    h1_s0 = model.get_hint_at_step(h1, 0)
-    h2_s0 = model.get_hint_at_step(h2, 0)
-
-    g1 = GraphFeatures.empty(batch_size, 4, hidden_dim)
-    g1.adj_mat = g1.adj_mat * get_mask(n1, 4, 2).type_as(g1.adj_mat)
-    g2 = GraphFeatures.empty(batch_size, 16, hidden_dim)
-    g2.adj_mat = g2.adj_mat * get_mask(n2, 16, 2).type_as(g2.adj_mat)
-
-    # i1A, i1adj, i1pos, i1s = i1['A'], i1['adj'], i1['pos'], i1['s']
-    # i2A, i2adj, i2pos, i2s = i2['A'], i2['adj'], i2['pos'], i2['s']
-    # h1pi_h, h1reach_h = h1_s0['pi_h'], h1_s0['reach_h']
-    # h2pi_h, h2reach_h = h2_s0['pi_h'], h2_s0['reach_h']
-
-    # model.encoder(i1, h1_s0, n1)
-    # model.encoder(i2, h2_s0, n2)
-    import ipdb; ipdb.set_trace()
-    # model.encoder.encoders[Stage.INPUT]['A'].encode(i1A, g1)
-    # model.encoder.encoders[Stage.INPUT]['A'].encode(i2A, g2)
-    # model.encoder.encoders[Stage.INPUT]['adj'].encode(i1adj, g1)
-    # model.encoder.encoders[Stage.INPUT]['adj'].encode(i2adj, g2)
-    # model.encoder.encoders[Stage.INPUT]['pos'].encode(i1pos, g1)
-    # model.encoder.encoders[Stage.INPUT]['pos'].encode(i2pos, g2)
-    # model.encoder.encoders[Stage.INPUT]['s'].encode(i1s, g1)
-    # model.encoder.encoders[Stage.INPUT]['s'].encode(i2s, g2)
-    # model.encoder.encoders[Stage.HINT]['pi_h'].encode(h1pi_h, g1)
-    # model.encoder.encoders[Stage.HINT]['pi_h'].encode(h2pi_h, g2)
-    # model.encoder.encoders[Stage.HINT]['reach_h'].encode(h1reach_h, g1)
-    # model.encoder.encoders[Stage.HINT]['reach_h'].encode(h2reach_h, g2)
-
-
-    g1 = model.encoder(i1, h1_s0, n1)
-    g2 = model.encoder(i2, h2_s0, n2)
-
-    ps1 = torch.zeros((batch_size, 4, hidden_dim))
-    ps2 = torch.zeros((batch_size, 16, hidden_dim))
-
-    assert (g1.adj_mat == g2.adj_mat[:, :4, :4]).all()
-    assert (g1.node_fts == g2.node_fts[:, :4, :]).all()
-    assert (g1.edge_fts == g2.edge_fts[:, :4, :4, :]).all()
-    assert (g1.graph_fts == g2.graph_fts[:, :]).all()
-
-    import ipdb; ipdb.set_trace()
-    nps1, nxe1 = model.processor(g1, processor_state=ps1, num_nodes=n1)
-    nps2, nxe2 = model.processor(g2, processor_state=ps2, num_nodes=n2)
-
-    assert (nps1[:, :, :] == nps2[:, :4, :]).all()
-    import ipdb; ipdb.set_trace()
-    assert torch.allclose(nxe1, nxe2[:, :4, :4, :], rtol=1e-7, atol=1e-6)
-
-
-    import ipdb; ipdb.set_trace()
-
-    
-    p1, l1, e1 = model(b1)
-    print("///"*100)
-    p2, l2, e2 = model(b2)
-    import ipdb; ipdb.set_trace()
+    # p1, l1, e1 = model(b1)
+    # print("///"*100)
+    # p2, l2, e2 = model(b2)
+    # import ipdb; ipdb.set_trace()
     # for batch in dl1:
     #     predictions, losses, evaluations  = model(batch)
     #     # evaluations = model.evaluate(predictions, batch)

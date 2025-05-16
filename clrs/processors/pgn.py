@@ -225,9 +225,15 @@ class DeepSets(PGN):
     Deep Sets (Zaheer et al., NeurIPS 2017)
     """
 
-    def forward(self, graph_features: GraphFeatures, processor_state: Tensor) -> Tuple[Tensor, Optional[Tensor]]:
+    def forward(self, graph_features: GraphFeatures, processor_state: Tensor, num_nodes: Optional[Tensor] = None) -> Tuple[Tensor, Optional[Tensor]]:
         # Turn into a batch of adjacency matrices
-        graph_features.adj_mat = torch.ones_like(graph_features.adj_mat) * torch.eye(graph_features.adj_mat.size(-1))
+        fully_connected = torch.ones_like(graph_features.adj_mat) 
+
+        if num_nodes is not None:
+            valid = get_mask(num_nodes, fully_connected.size(-1), 2).type_as(fully_connected)
+            fully_connected = fully_connected * valid
+
+        graph_features.adj_mat = fully_connected * torch.eye(graph_features.adj_mat.size(-1))
         return super().forward(graph_features, processor_state)
     
 
@@ -235,8 +241,11 @@ class MPNN(PGN):
     """
     Message-Passing Neural Network (Gilmer et al., ICML 2017)
     """
-    def forward(self, graph_features: GraphFeatures, processor_state: Tensor) -> Tuple[Tensor, Optional[Tensor]]:
+    def forward(self, graph_features: GraphFeatures, processor_state: Tensor, num_nodes: Optional[Tensor] = None) -> Tuple[Tensor, Optional[Tensor]]:
         graph_features.adj_mat = torch.ones_like(graph_features.adj_mat)
+        if num_nodes is not None:
+            valid = get_mask(num_nodes, graph_features.adj_mat.size(-1), 2).type_as(graph_features.adj_mat)
+            graph_features.adj_mat = graph_features.adj_mat * valid
         return super().forward(graph_features, processor_state) 
     
 class PGNMask(PGN):

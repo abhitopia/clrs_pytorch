@@ -5,11 +5,14 @@
 - [x] Ament feature to contain nb_nodes
 - [x] Expand dims method
 - [x] Encoding works on static_batch!! 
-- [ ] Refactor steps mask
+- [x] Refactor steps mask
+- [x] Set up encoder comparison
+- [x] Test that adjacency matrix is correctly computed on static batches
+- [x] Pass the num nodes to the model
+- [ ] Test all pgn models
+- [ ] Test all gat models
+- [ ] Make decoder work on static batches
 - [ ] Make evaluations mean sin batch dim
-- [ ] Set up encoder comparison
-- [ ] Test that adjacency matrix is correctly computed on static batches
-- [ ] Pass the num nodes to the model
 - [ ] Ensure that the output for static batch matches the non-static batch
 
 # Evaluation

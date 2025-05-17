@@ -202,7 +202,13 @@ class PGN(Processor):
                 gate = torch.sigmoid(self.gate_fc3(F.relu(gate_input))) # [B, N, O]
                 updated = updated * gate + processor_state * (1 - gate) # [B, N, O]
 
+
+            if num_nodes is not None:
+                updated = updated.masked_fill(~expand_trailing_dims_as(get_mask(num_nodes, N, 1), updated), 0.0)
+
             processor_state = updated
+
+
 
         return processor_state, tri_msgs
 

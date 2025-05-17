@@ -76,6 +76,8 @@ class GAT(Processor):
         else:
             edge_mask = graph_features.adj_mat.to(torch.bool) # [B, N, N]
 
+        head_mask = edge_mask.unsqueeze(1) # [B, 1, N, N]
+
   
         for _ in range(self.mp_steps):
             node_state = torch.cat([graph_features.node_fts, processor_state], dim=-1) # [B, N, 2D] == [B, N, H*F]
@@ -83,7 +85,6 @@ class GAT(Processor):
             att_2n = self.a_2n(node_state).unsqueeze(-1).permute(0, 2, 3, 1) # [B, H, 1, N]
 
             logits = att_1n + att_2n + att_e + att_g # [B, H, N, N]
-            head_mask = edge_mask.unsqueeze(1) # [B, 1, N, N]
             logits = logits.masked_fill(~head_mask, float('-inf'))  # Apply the node mask
 
             # 2) find rows with *zero* valid entries
@@ -208,6 +209,15 @@ class GATv2(Processor):
         bias_mat = torch.tile(bias_mat[..., None], (1, 1, 1, self.nb_heads)) # [B, N, N, H]
         bias_mat = bias_mat.permute(0, 3, 1, 2) # [B, H, N, N]
 
+        # Build a boolean [B,N,N] mask of which (i,j) pairs are valid
+        if num_nodes is not None:
+            edge_mask = get_mask(num_nodes, N, 2)             # bool [B,N,N]
+        else:
+            edge_mask = graph_features.adj_mat.to(torch.bool) # fallback
+
+        # Turn that into a [B,1,N,N] head-level mask
+        head_mask = edge_mask[:, None, :, :]                  # [B,1,N,N]
+
         pre_att_e = self.w_e(graph_features.edge_fts)                            # [B, N, N, M]
         pre_att_g = self.w_g(graph_features.graph_fts).unsqueeze(1).unsqueeze(2) # [B, 1, 1, M]
 
@@ -228,7 +238,10 @@ class GATv2(Processor):
             logits = self.a_heads(pre_att) # [B, N, N, H]
             logits = logits.permute(0, 3, 1, 2) # [B, H, N, N]
 
-            coefs = torch.softmax(logits + bias_mat, dim=-1)
+            # 2) force all padded or non-existent edges to -inf
+            logits = logits.masked_fill(~head_mask, float("-inf"))
+
+            coefs = torch.softmax(logits + bias_mat, dim=-1) * head_mask
             ret = torch.matmul(coefs, values)  # [B, H, N, F]
             ret = ret.permute(0, 2, 1, 3)  # [B, N, H, F]
             ret = ret.reshape(B, N, self.hidden_size) # [B, N, H*F] == [B, N, D]
@@ -238,17 +251,22 @@ class GATv2(Processor):
 
             ret = self.activation(ret)
             ret = self.ln(ret)
+
+            if num_nodes is not None:
+                ret = ret.masked_fill(~expand_trailing_dims_as(get_mask(num_nodes, N, 1), ret), 0.0)
+
             processor_state = ret
 
-        return ret, None
+        return processor_state, None
 
 
 class GATv2Full(GATv2):
   """Graph Attention Network v2 with full adjacency matrix."""
 
   def process(self, graph_features: GraphFeatures, processor_state: Optional[Tensor] = None, num_nodes: Optional[int] = None) -> Tuple[Tensor, Optional[Tensor]]:
-    graph_features = GraphFeatures(torch.ones_like(graph_features.adj_mat), 
-                                   graph_features.node_fts, 
-                                   graph_features.edge_fts, 
-                                   graph_features.graph_fts)
-    return super().process(graph_features, processor_state, num_nodes)
+        graph_features.adj_mat = torch.ones_like(graph_features.adj_mat)
+        if num_nodes is not None:
+            valid = get_mask(num_nodes, graph_features.adj_mat.size(-1), 2).type_as(graph_features.adj_mat)
+            graph_features.adj_mat = graph_features.adj_mat * valid
+        
+        return super().process(graph_features, processor_state, num_nodes)

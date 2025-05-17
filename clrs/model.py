@@ -959,7 +959,7 @@ if __name__ == "__main__":
     dropout = 0.0
 
 
-    process_classes = [p for p in list(ProcessorFactory) if 'gat' in p.name and '2' in p.name]
+    process_classes = [p for p in list(ProcessorFactory)]
 
     import ipdb; ipdb.set_trace()
     for processor_cls in process_classes:
@@ -1019,13 +1019,16 @@ if __name__ == "__main__":
 
         # import ipdb; ipdb.set_trace()
         nps1, nxe1 = model.processor(g1, processor_state=ps1, num_nodes=None)
-
-        print('-'*30)
         nps2, nxe2 = model.processor(g2, processor_state=ps2, num_nodes=n2)
 
-        import ipdb; ipdb.set_trace()
-        assert (nps1[:, :, :] == nps2[:, :4, :]).all()
+        try:
+            assert (nps1[:, :, :] == nps2[:, :4, :]).all()
+        except Exception as e:
+            print("Trying allclose for {}".format(processor_cls.name))
+            assert torch.allclose(nps1[:, :, :], nps2[:, :4, :], atol=1e-6, rtol=1e-6)
+            
         assert (nps2[:, 4:, :] == 0).all()
+ 
 
         if nxe1 is None: 
             assert nxe2 is None

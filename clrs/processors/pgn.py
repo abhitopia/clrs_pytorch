@@ -155,13 +155,15 @@ class PGN(Processor):
                     # Take max over the first dimension
                     tri_max, _ = masked_triplet.max(dim=1) # [B, N, N, T]
                     # Apply mask to output
-                    edge_mask = expand_trailing_dims_as(node_mask, tri_max) # [B, N, N, T]
-                    tri_max = tri_max.masked_fill(~edge_mask, torch.tensor(0.0, dtype=tri_max.dtype, device=tri_max.device))
+                    edge_mask = get_mask(num_nodes, N, 2).unsqueeze(-1) # [B, N, N, 1]
+                    tri_max = torch.where(edge_mask, tri_max, torch.tensor(0.0, dtype=tri_max.dtype, device=tri_max.device))
+                    tri_msgs = self.fc_triplet_out(tri_max) # [B, N, N, O]
+                    tri_msgs = self.activation(tri_msgs) # [B, N, N, O]
+                    tri_msgs = torch.where(edge_mask, tri_msgs, torch.tensor(0.0, dtype=tri_msgs.dtype, device=tri_msgs.device))
                 else:
                     tri_max = triplet_tensor.max(dim=1)[0] # [B, N, N, T]            
-                
-                tri_msgs = self.fc_triplet_out(tri_max) # [B, N, N, O]
-                tri_msgs = self.activation(tri_msgs) # [B, N, N, O]
+                    tri_msgs = self.fc_triplet_out(tri_max) # [B, N, N, O]
+                    tri_msgs = self.activation(tri_msgs) # [B, N, N, O]
 
             # Combine and transform messages
             msgs = (

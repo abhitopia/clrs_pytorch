@@ -288,7 +288,7 @@ class Decoder(nn.Module):
             raise ValueError("Invalid output type")
         return preds
     
-    def decode_edge_fts(self, graph_features: GraphFeatures) -> Tensor:
+    def decode_edge_fts(self, graph_features: GraphFeatures, num_nodes: Optional[Tensor] = None) -> Tensor:
         """
         graph_features.node_fts shape: (batch_size, nb_nodes, node_dim)
         graph_features.edge_fts shape: (batch_size, nb_nodes, nb_nodes, edge_dim)
@@ -297,21 +297,31 @@ class Decoder(nn.Module):
         """
         """Decodes edge features."""
 
+        N = graph_features.edge_fts.size(-2)
+
         pred_1 = self.decoders[0](graph_features.node_fts) # (batch_size, nb_nodes, 1/num_cats/hidden_dim)
         pred_2 = self.decoders[1](graph_features.node_fts) # (batch_size, nb_nodes, 1/num_cats/hidden_dim)
         pred_e = self.decoders[2](graph_features.edge_fts) # (batch_size, nb_nodes, nb_nodes, 1/num_cats/hidden_dim)
         pred = (torch.unsqueeze(pred_1, -2) + torch.unsqueeze(pred_2, -3) + pred_e) # (batch_size, nb_nodes, nb_nodes, 1/num_cats/hidden_dim)
+
         if self.type_ in [Type.SCALAR, Type.MASK, Type.MASK_ONE]:
             preds = pred.squeeze(-1)
         elif self.type_ == Type.CATEGORICAL:
             preds = pred
         elif self.type_ == Type.POINTER:
             pred_2 = self.decoders[3](graph_features.node_fts) # (batch_size, nb_nodes, hidden_dim)
-            p_m = torch.max(pred.unsqueeze(-2), pred_2.unsqueeze(-3).unsqueeze(-3)) # (batch_size, nb_nodes, nb_nodes, nb_nodes, hidden_dim)
+            if num_nodes is not None:
+                pred_2 = pred_2.masked_fill(~expand_trailing_dims_as(get_mask(num_nodes, N, 1), pred_2), float("-inf"))
+                pred = pred.masked_fill(~expand_trailing_dims_as(get_mask(num_nodes, N, 2), pred), float("-inf"))
+                p_m = torch.max(pred.unsqueeze(-2), pred_2.unsqueeze(-3).unsqueeze(-3)) # (batch_size, nb_nodes, nb_nodes, nb_nodes, hidden_dim)
+                p_m = torch.where(expand_trailing_dims_as(get_mask(num_nodes, N, 3), p_m), p_m, torch.tensor(0.0, device=p_m.device, dtype=p_m.dtype))
+            else:
+                p_m = torch.max(pred.unsqueeze(-2), pred_2.unsqueeze(-3).unsqueeze(-3)) # (batch_size, nb_nodes, nb_nodes, nb_nodes, hidden_dim)
             preds = self.decoders[4](p_m).squeeze(-1) # (batch_size, nb_nodes, nb_nodes, nb_nodes)
         else:
             raise ValueError("Invalid output type")
         if self.inf_bias_edge and self.type_ in [Type.MASK, Type.MASK_ONE]:
+            import ipdb; ipdb.set_trace()
             per_batch_min = torch.amin(preds, dim=tuple(range(1, preds.dim())), keepdim=True)
             neg_one = torch.tensor(-1.0, device=preds.device, dtype=preds.dtype)
             preds = torch.where(graph_features.adj_mat > 0.5,
@@ -388,11 +398,11 @@ class Decoder(nn.Module):
 
         return data
 
-    def decode(self, graph_features: GraphFeatures) -> Tuple[Tensor, Tensor]:
+    def decode(self, graph_features: GraphFeatures, num_nodes: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
         if self.location == Location.NODE:
             raw_result = self.decode_node_fts(graph_features)
         elif self.location == Location.EDGE:
-            raw_result = self.decode_edge_fts(graph_features)
+            raw_result = self.decode_edge_fts(graph_features, num_nodes)
         elif self.location == Location.GRAPH:
             raw_result = self.decode_graph_fts(graph_features)
         return self.postprocess(raw_result),raw_result
@@ -659,16 +669,16 @@ class AlgoDecoder(nn.ModuleDict):
                                        inf_bias_edge=self.inf_bias_edge)
                 self.decoders[Stage.HINT].add_module(name, decoder)
 
-    def forward(self, graph_features: GraphFeatures) -> Tuple[Trajectory, Trajectory]:
+    def forward(self, graph_features: GraphFeatures, num_nodes: Optional[Tensor] = None) -> Tuple[Trajectory, Trajectory]:
         trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
         raw_trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
         
         for name, decoder in self.decoders[Stage.OUTPUT].items():
-            trajectory[Stage.OUTPUT][name], raw_trajectory[Stage.OUTPUT][name] = decoder.decode(graph_features)
+            trajectory[Stage.OUTPUT][name], raw_trajectory[Stage.OUTPUT][name] = decoder.decode(graph_features, num_nodes)
 
         if self.decode_hints:
             for name, decoder in self.decoders[Stage.HINT].items():
-                trajectory[Stage.HINT][name], raw_trajectory[Stage.HINT][name] = decoder.decode(graph_features)
+                trajectory[Stage.HINT][name], raw_trajectory[Stage.HINT][name] = decoder.decode(graph_features, num_nodes)
 
         return trajectory, raw_trajectory
 
@@ -832,14 +842,15 @@ class AlgoModel(torch.nn.Module):
                 lstm_state=lstm_state                     
             )
 
+            not_done_mask = num_steps > (step_idx + 1)
             prediction[Stage.HINT] = self.append_step_hints(prediction[Stage.HINT], prediction_step[Stage.HINT])
             prediction[Stage.OUTPUT] = self.merge_predicted_output(output=prediction[Stage.OUTPUT], 
                                                         predicted_output=prediction_step[Stage.OUTPUT], 
-                                                        not_done_mask=(num_steps > (step_idx + 1)))
+                                                        not_done_mask=not_done_mask)
             raw_prediction[Stage.HINT] = self.append_step_hints(raw_prediction[Stage.HINT], raw_prediction_step[Stage.HINT])
             raw_prediction[Stage.OUTPUT] = self.merge_predicted_output(output=raw_prediction[Stage.OUTPUT], 
                                                     predicted_output=raw_prediction_step[Stage.OUTPUT], 
-                                                    not_done_mask=(num_steps > (step_idx + 1)))
+                                                    not_done_mask=not_done_mask)
 
         # first target hint is never predicted
         # predicted hints are shifted by one step, and the first predicted hint is actually second target hint
@@ -1034,9 +1045,43 @@ if __name__ == "__main__":
             assert nxe2 is None
         else:
             assert (nxe1 == nxe2[:, :4, :4, :]).all()
-            assert (nxe1[:, 4:, :4, :] == 0).all()
-            assert (nxe1[:, :4, 4:, :] == 0).all()
-            assert (nxe1[:, 4:, 4:, :] == 0).all()
+            # import ipdb; ipdb.set_trace()
+            assert (nxe2[:, 4:, :4, :] == 0).all()
+            assert (nxe2[:, :4, 4:, :] == 0).all()
+            assert (nxe2[:, 4:, 4:, :] == 0).all()
+
+
+        nfd1 = torch.cat([g1.node_fts, ps1, nps1], dim=-1)
+        nfd2 = torch.cat([g2.node_fts, ps2, nps2], dim=-1)
+
+        if nxe1 is not None:
+            nxe1 = torch.cat([g1.edge_fts, nxe1], dim=-1)
+            nxe2 = torch.cat([g2.edge_fts, nxe2], dim=-1)
+        else:
+            nxe1 = g1.edge_fts
+            nxe2 = g2.edge_fts
+        
+        gd1 = GraphFeatures(adj_mat=g1.adj_mat, node_fts=nfd1, edge_fts=nxe1, graph_fts=g1.graph_fts)
+        gd2 = GraphFeatures(adj_mat=g2.adj_mat, node_fts=nfd2, edge_fts=nxe2, graph_fts=g2.graph_fts)
+
+        preds1, raw_preds1 = model.decoder.decoders[Stage.OUTPUT]['s'].decode(gd1, num_nodes=None)
+        preds2, raw_preds2 = model.decoder.decoders[Stage.OUTPUT]['s'].decode(gd2, num_nodes=n2)
+
+        # assert (preds2['output']['s'][:, :4, :4, :4] == preds1['output']['s']).all()
+        assert (raw_preds2[:, :4, :4, :4] - raw_preds1).abs().max() < 1e-6
+        assert (raw_preds2[:, 4:, :4, :4] == 0.0).all()
+        assert (raw_preds2[:, :4, 4:, :4] == 0.0).all()
+        assert (raw_preds2[:, :4, :4, 4:] == 0.0).all()
+        assert (raw_preds2[:, 4:, 4:, :4] == 0.0).all()
+        assert (raw_preds2[:, 4:, :4, 4:] == 0.0).all()
+        assert (raw_preds2[:, :4, 4:, 4:] == 0.0).all()
+        assert (raw_preds2[:, 4:, 4:, 4:] == 0.0).all()
+        
+        # pd1, rd1 = model.decoder(gd1)
+        # pd2, rd2 = model.decoder(gd2)
+
+        # assert (pd2['output']['s'][:, :4, :4, :4] == pd1['output']['s']).all()        
+        doSomething = 1
 
 
     # import ipdb; ipdb.set_trace()

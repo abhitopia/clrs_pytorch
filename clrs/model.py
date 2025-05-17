@@ -139,13 +139,15 @@ class Encoder(nn.Module):
             adj_mat += ((data + data.permute(0, 2, 1)) > 0.0)
         return (adj_mat > 0.).type_as(data)
     
-    def encode_to_node_fts(self, data: Tensor, node_fts: Tensor) -> Tensor:
+    def encode_to_node_fts(self, data: Tensor, node_fts: Tensor, num_nodes: Optional[Tensor] = None) -> Tensor:
         is_pointer = (self.type_ in [Type.POINTER, Type.PERMUTATION_POINTER])
         if self.type_ != Type.CATEGORICAL:
             data = data.unsqueeze(-1)
 
         if (self.location == Location.NODE and not is_pointer) or (self.location == Location.GRAPH and self.type_ == Type.POINTER):
             encoding = self.encoders[0](data)
+            if num_nodes is not None:
+                encoding = encoding.masked_fill(~expand(batch_mask(num_nodes, data.size(1), 1), encoding), 0.0)
             node_fts += encoding
         return node_fts
 
@@ -178,7 +180,7 @@ class Encoder(nn.Module):
 
     def encode(self, data: Tensor, graph_features: GraphFeatures = None, num_nodes: Tensor = None) -> GraphFeatures:
         graph_features.adj_mat = self.encode_to_adj_mat(data, graph_features.adj_mat)
-        graph_features.node_fts = self.encode_to_node_fts(data, graph_features.node_fts)
+        graph_features.node_fts = self.encode_to_node_fts(data, graph_features.node_fts, num_nodes)
         graph_features.edge_fts = self.encode_to_edge_fts(data, graph_features.edge_fts, num_nodes)
         graph_features.graph_fts = self.encode_to_graph_fts(data, graph_features.graph_fts)
         return graph_features
@@ -916,7 +918,7 @@ if __name__ == "__main__":
     torch.use_deterministic_algorithms(True)
     from .dataset import get_dataset
     from torch.utils.data import DataLoader
-    from .processors import ProcessorFactory
+    from .processors import ProcessorEnum
 
     algo = 'matrix_chain_order'
     algos = [AlgorithmEnum.matrix_chain_order]
@@ -972,7 +974,7 @@ if __name__ == "__main__":
     dropout = 0.0
 
 
-    process_classes = [p for p in list(ProcessorFactory)]
+    process_classes = [p for p in list(ProcessorEnum)]
 
     import ipdb; ipdb.set_trace()
     for processor_cls in process_classes:

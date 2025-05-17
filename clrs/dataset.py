@@ -450,6 +450,7 @@ def get_dataset(algos: Union[AlgorithmEnum, List[AlgorithmEnum]],
                 generate_on_the_fly: bool = False,
                 static_batch_size: bool = True,
                 stacked: bool = False,
+                string_matcher_override: bool = True, 
                 **algo_kwargs) -> StackedAlgoFeatureDataset:
     
     if isinstance(algos, AlgorithmEnum):
@@ -461,7 +462,7 @@ def get_dataset(algos: Union[AlgorithmEnum, List[AlgorithmEnum]],
     for algo in algos:
         trajectory_sizes_algo = trajectory_sizes
         # As per the generalise algorithmic learner paper
-        if algo in [AlgorithmEnum.naive_string_matcher, AlgorithmEnum.kmp_matcher]:
+        if algo in [AlgorithmEnum.naive_string_matcher, AlgorithmEnum.kmp_matcher] and string_matcher_override:
             max_length = max(trajectory_sizes)
             max_length = (max_length * 5) // 4
             trajectory_sizes_algo = [max_length]*len(trajectory_sizes)

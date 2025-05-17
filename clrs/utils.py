@@ -6,6 +6,12 @@ from torch import Tensor
 import torch
 import itertools
 
+_BIAS_VALUE = 0.0
+
+
+def set_bias_value(val):
+    global _BIAS_VALUE
+    _BIAS_VALUE = val
 
 def batch_mask(valid_count: Tensor, max_count: int, trailing_dims: int = 2) -> Tensor:
 
@@ -63,7 +69,8 @@ def default_linear_init(weight: nn.Parameter, bias: Optional[nn.Parameter]) -> N
     # Bias Initialization (Haiku's default)
     if bias is not None:
         # nn.init.zeros_(bias)
-        nn.init.constant_(bias, 0.0)
+        # print(f"Setting bias to {_BIAS_VALUE}")
+        nn.init.constant_(bias, _BIAS_VALUE)
 
 
 class Linear(nn.Linear):

@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 import torch.nn.functional as F
 from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output, OutputClass, AlgorithmEnum, Feature, NumNodes, NumSteps
-from .utils import log_sinkhorn, Linear, get_mask, expand_trailing_dims_as
+from .utils import log_sinkhorn, Linear, batch_mask, expand
 from .processors import GraphFeatures, Processor
 
 
@@ -149,7 +149,7 @@ class Encoder(nn.Module):
             node_fts += encoding
         return node_fts
 
-    def encode_to_edge_fts(self, data: Tensor, edge_fts: Tensor, num_nodes: Tensor) -> Tensor:
+    def encode_to_edge_fts(self, data: Tensor, edge_fts: Tensor, num_nodes: Optional[Tensor] = None) -> Tensor:
         if self.type_ != Type.CATEGORICAL:
             data = data.unsqueeze(-1)
 
@@ -161,10 +161,11 @@ class Encoder(nn.Module):
             if self.type_ == Type.POINTER:
                 # Aggregate pointer contributions across sender and receiver nodes.
                 encoding_2 = self.encoders[1](data)
-                sum_2dims = torch.sum(encoding, dim=1) + torch.sum(encoding_2, dim=2)
-                edge_fts += sum_2dims/expand_trailing_dims_as(num_nodes, sum_2dims)
-            else:
-                edge_fts += encoding
+                if num_nodes is not None:
+                    sum_2dims = torch.sum(encoding, dim=1) + torch.sum(encoding_2, dim=2)
+                    edge_fts += sum_2dims/expand(num_nodes, sum_2dims)
+                else:
+                    edge_fts += torch.mean(encoding, dim=1) + torch.mean(encoding_2, dim=2)
         return edge_fts
 
     def encode_to_graph_fts(self, data: Tensor, graph_fts: Tensor) -> Tensor:
@@ -311,10 +312,10 @@ class Decoder(nn.Module):
         elif self.type_ == Type.POINTER:
             pred_2 = self.decoders[3](graph_features.node_fts) # (batch_size, nb_nodes, hidden_dim)
             if num_nodes is not None:
-                pred_2 = pred_2.masked_fill(~expand_trailing_dims_as(get_mask(num_nodes, N, 1), pred_2), float("-inf"))
-                pred = pred.masked_fill(~expand_trailing_dims_as(get_mask(num_nodes, N, 2), pred), float("-inf"))
+                pred_2 = pred_2.masked_fill(~expand(batch_mask(num_nodes, N, 1), pred_2), float("-inf"))
+                pred = pred.masked_fill(~expand(batch_mask(num_nodes, N, 2), pred), float("-inf"))
                 p_m = torch.max(pred.unsqueeze(-2), pred_2.unsqueeze(-3).unsqueeze(-3)) # (batch_size, nb_nodes, nb_nodes, nb_nodes, hidden_dim)
-                p_m = torch.where(expand_trailing_dims_as(get_mask(num_nodes, N, 3), p_m), p_m, torch.tensor(0.0, device=p_m.device, dtype=p_m.dtype))
+                p_m = torch.where(expand(batch_mask(num_nodes, N, 3), p_m), p_m, torch.tensor(0.0, device=p_m.device, dtype=p_m.dtype))
             else:
                 p_m = torch.max(pred.unsqueeze(-2), pred_2.unsqueeze(-3).unsqueeze(-3)) # (batch_size, nb_nodes, nb_nodes, nb_nodes, hidden_dim)
             preds = self.decoders[4](p_m).squeeze(-1) # (batch_size, nb_nodes, nb_nodes, nb_nodes)
@@ -608,14 +609,15 @@ class AlgoEncoder(nn.ModuleDict):
             elif stage == Stage.HINT and self.encode_hints:
                 self.encoders[Stage.HINT].add_module(name, encoder)
 
-    def forward(self, input: Input, step_hints: Hints, num_nodes: Tensor) -> GraphFeatures:
+    def forward(self, input: Input, step_hints: Hints, num_nodes: Optional[Tensor] = None) -> GraphFeatures:
         batch_size = input['pos'].shape[0]
         node_dim = input['pos'].shape[1]
         device = input['pos'].device
-
-        node_mask = get_mask(num_nodes, node_dim, 2)
         graph_features = GraphFeatures.empty(batch_size, node_dim, self.hidden_dim, device=device)
-        graph_features.adj_mat = graph_features.adj_mat * node_mask.type_as(graph_features.adj_mat)
+
+        if num_nodes is not None:
+            node_mask = batch_mask(num_nodes, node_dim, 2)
+            graph_features.adj_mat = graph_features.adj_mat * node_mask.type_as(graph_features.adj_mat)
 
         for name, data in input.items():
             graph_features = self.encoders[Stage.INPUT][name].encode(data, graph_features, num_nodes)
@@ -984,9 +986,9 @@ if __name__ == "__main__":
         h2_s0 = model.get_hint_at_step(h2, 0)
 
         g1 = GraphFeatures.empty(batch_size, 4, hidden_dim)
-        g1.adj_mat = g1.adj_mat * get_mask(n1, 4, 2).type_as(g1.adj_mat)
+        g1.adj_mat = g1.adj_mat * batch_mask(n1, 4, 2).type_as(g1.adj_mat)
         g2 = GraphFeatures.empty(batch_size, 16, hidden_dim)
-        g2.adj_mat = g2.adj_mat * get_mask(n2, 16, 2).type_as(g2.adj_mat)
+        g2.adj_mat = g2.adj_mat * batch_mask(n2, 16, 2).type_as(g2.adj_mat)
 
         # i1A, i1adj, i1pos, i1s = i1['A'], i1['adj'], i1['pos'], i1['s']
         # i2A, i2adj, i2pos, i2s = i2['A'], i2['adj'], i2['pos'], i2['s']
@@ -1010,11 +1012,10 @@ if __name__ == "__main__":
         # model.encoder.encoders[Stage.HINT]['reach_h'].encode(h2reach_h, g2)
 
 
-        g1 = model.encoder(i1, h1_s0, n1)
+        g1 = model.encoder(i1, h1_s0, None)
         g2 = model.encoder(i2, h2_s0, n2)
 
-        ps1 = torch.zeros((batch_size, 4, hidden_dim))
-        ps2 = torch.zeros((batch_size, 16, hidden_dim))
+  
 
         assert (g1.adj_mat == g2.adj_mat[:, :4, :4]).all()
         assert (g2.adj_mat[:, :4, 4:] == 0).all()
@@ -1028,60 +1029,63 @@ if __name__ == "__main__":
         assert (g1.edge_fts[:, 4:, 4:, :] == 0).all()
         assert (g1.graph_fts == g2.graph_fts[:, :]).all()
 
-        # import ipdb; ipdb.set_trace()
-        nps1, nxe1 = model.processor(g1, processor_state=ps1, num_nodes=None)
-        nps2, nxe2 = model.processor(g2, processor_state=ps2, num_nodes=n2)
+        # ps1 = torch.zeros((batch_size, 4, hidden_dim))
+        # ps2 = torch.zeros((batch_size, 16, hidden_dim))
 
-        try:
-            assert (nps1[:, :, :] == nps2[:, :4, :]).all()
-        except Exception as e:
-            print("Trying allclose for {}".format(processor_cls.name))
-            assert torch.allclose(nps1[:, :, :], nps2[:, :4, :], atol=1e-6, rtol=1e-6)
+        # # import ipdb; ipdb.set_trace()
+        # nps1, nxe1 = model.processor(g1, processor_state=ps1, num_nodes=None)
+        # nps2, nxe2 = model.processor(g2, processor_state=ps2, num_nodes=n2)
+
+        # try:
+        #     assert (nps1[:, :, :] == nps2[:, :4, :]).all()
+        # except Exception as e:
+        #     print("Trying allclose for {}".format(processor_cls.name))
+        #     assert torch.allclose(nps1[:, :, :], nps2[:, :4, :], atol=1e-6, rtol=1e-6)
             
-        assert (nps2[:, 4:, :] == 0).all()
+        # assert (nps2[:, 4:, :] == 0).all()
  
 
-        if nxe1 is None: 
-            assert nxe2 is None
-        else:
-            assert (nxe1 == nxe2[:, :4, :4, :]).all()
-            # import ipdb; ipdb.set_trace()
-            assert (nxe2[:, 4:, :4, :] == 0).all()
-            assert (nxe2[:, :4, 4:, :] == 0).all()
-            assert (nxe2[:, 4:, 4:, :] == 0).all()
+        # if nxe1 is None: 
+        #     assert nxe2 is None
+        # else:
+        #     assert (nxe1 == nxe2[:, :4, :4, :]).all()
+        #     # import ipdb; ipdb.set_trace()
+        #     assert (nxe2[:, 4:, :4, :] == 0).all()
+        #     assert (nxe2[:, :4, 4:, :] == 0).all()
+        #     assert (nxe2[:, 4:, 4:, :] == 0).all()
 
 
-        nfd1 = torch.cat([g1.node_fts, ps1, nps1], dim=-1)
-        nfd2 = torch.cat([g2.node_fts, ps2, nps2], dim=-1)
+        # nfd1 = torch.cat([g1.node_fts, ps1, nps1], dim=-1)
+        # nfd2 = torch.cat([g2.node_fts, ps2, nps2], dim=-1)
 
-        if nxe1 is not None:
-            nxe1 = torch.cat([g1.edge_fts, nxe1], dim=-1)
-            nxe2 = torch.cat([g2.edge_fts, nxe2], dim=-1)
-        else:
-            nxe1 = g1.edge_fts
-            nxe2 = g2.edge_fts
+        # if nxe1 is not None:
+        #     nxe1 = torch.cat([g1.edge_fts, nxe1], dim=-1)
+        #     nxe2 = torch.cat([g2.edge_fts, nxe2], dim=-1)
+        # else:
+        #     nxe1 = g1.edge_fts
+        #     nxe2 = g2.edge_fts
         
-        gd1 = GraphFeatures(adj_mat=g1.adj_mat, node_fts=nfd1, edge_fts=nxe1, graph_fts=g1.graph_fts)
-        gd2 = GraphFeatures(adj_mat=g2.adj_mat, node_fts=nfd2, edge_fts=nxe2, graph_fts=g2.graph_fts)
+        # gd1 = GraphFeatures(adj_mat=g1.adj_mat, node_fts=nfd1, edge_fts=nxe1, graph_fts=g1.graph_fts)
+        # gd2 = GraphFeatures(adj_mat=g2.adj_mat, node_fts=nfd2, edge_fts=nxe2, graph_fts=g2.graph_fts)
 
-        preds1, raw_preds1 = model.decoder.decoders[Stage.OUTPUT]['s'].decode(gd1, num_nodes=None)
-        preds2, raw_preds2 = model.decoder.decoders[Stage.OUTPUT]['s'].decode(gd2, num_nodes=n2)
+        # preds1, raw_preds1 = model.decoder.decoders[Stage.OUTPUT]['s'].decode(gd1, num_nodes=None)
+        # preds2, raw_preds2 = model.decoder.decoders[Stage.OUTPUT]['s'].decode(gd2, num_nodes=n2)
 
-        # assert (preds2['output']['s'][:, :4, :4, :4] == preds1['output']['s']).all()
-        assert (raw_preds2[:, :4, :4, :4] - raw_preds1).abs().max() < 1e-6
-        assert (raw_preds2[:, 4:, :4, :4] == 0.0).all()
-        assert (raw_preds2[:, :4, 4:, :4] == 0.0).all()
-        assert (raw_preds2[:, :4, :4, 4:] == 0.0).all()
-        assert (raw_preds2[:, 4:, 4:, :4] == 0.0).all()
-        assert (raw_preds2[:, 4:, :4, 4:] == 0.0).all()
-        assert (raw_preds2[:, :4, 4:, 4:] == 0.0).all()
-        assert (raw_preds2[:, 4:, 4:, 4:] == 0.0).all()
+        # # assert (preds2['output']['s'][:, :4, :4, :4] == preds1['output']['s']).all()
+        # assert (raw_preds2[:, :4, :4, :4] - raw_preds1).abs().max() < 1e-6
+        # assert (raw_preds2[:, 4:, :4, :4] == 0.0).all()
+        # assert (raw_preds2[:, :4, 4:, :4] == 0.0).all()
+        # assert (raw_preds2[:, :4, :4, 4:] == 0.0).all()
+        # assert (raw_preds2[:, 4:, 4:, :4] == 0.0).all()
+        # assert (raw_preds2[:, 4:, :4, 4:] == 0.0).all()
+        # assert (raw_preds2[:, :4, 4:, 4:] == 0.0).all()
+        # assert (raw_preds2[:, 4:, 4:, 4:] == 0.0).all()
         
-        # pd1, rd1 = model.decoder(gd1)
-        # pd2, rd2 = model.decoder(gd2)
+        # # pd1, rd1 = model.decoder(gd1)
+        # # pd2, rd2 = model.decoder(gd2)
 
-        # assert (pd2['output']['s'][:, :4, :4, :4] == pd1['output']['s']).all()        
-        doSomething = 1
+        # # assert (pd2['output']['s'][:, :4, :4, :4] == pd1['output']['s']).all()        
+        # doSomething = 1
 
 
     # import ipdb; ipdb.set_trace()

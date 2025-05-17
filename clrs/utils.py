@@ -7,7 +7,7 @@ import torch
 import itertools
 
 
-def get_mask(valid_count: Tensor, max_count: int, trailing_dims: int = 2) -> Tensor:
+def batch_mask(valid_count: Tensor, max_count: int, trailing_dims: int = 2) -> Tensor:
 
     assert valid_count.ndim == 1, "num_nodes must be a 1D tensor"
 
@@ -34,7 +34,7 @@ def get_mask(valid_count: Tensor, max_count: int, trailing_dims: int = 2) -> Ten
     
     return mask
 
-def expand_trailing_dims_as(mask: Tensor, target: Tensor) -> Tensor:
+def expand(mask: Tensor, target: Tensor) -> Tensor:
     unsqueezed_shape = mask.shape + (1,) * (target.ndim - mask.ndim)
     return mask.view(unsqueezed_shape).expand(target.shape)
 
@@ -62,7 +62,8 @@ def default_linear_init(weight: nn.Parameter, bias: Optional[nn.Parameter]) -> N
 
     # Bias Initialization (Haiku's default)
     if bias is not None:
-        nn.init.zeros_(bias)
+        # nn.init.zeros_(bias)
+        nn.init.constant_(bias, 0.0)
 
 
 class Linear(nn.Linear):

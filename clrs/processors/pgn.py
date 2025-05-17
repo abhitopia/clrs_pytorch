@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import List, Optional
-from ..utils import Linear, get_mask, expand_trailing_dims_as
+from ..utils import Linear, batch_mask, expand
 from .base import Processor, GraphFeatures
 from torch import nn
 import torch
@@ -12,6 +12,62 @@ class Reduction(str, Enum):
     MAX = "max"
     MIN = "min"
     MEAN = "mean"
+
+class TripletNN(nn.Module):
+    def __init__(self, 
+                 node_feat_size: int, 
+                 edge_feat_size: int, 
+                 graph_feat_size: int, 
+                 triplet_feature_size: int, 
+                 out_features: int,
+                 activation: Optional[nn.Module] = nn.ReLU()):
+        super().__init__()
+        assert triplet_feature_size is not None, "triplet_feature_size must be provided if use_triplets is True"
+        self.triplet_fc_z1 = Linear(node_feat_size, triplet_feature_size)
+        self.triplet_fc_z2 = Linear(node_feat_size, triplet_feature_size)
+        self.triplet_fc_z3 = Linear(node_feat_size, triplet_feature_size)
+        self.triplet_fc_e1 = Linear(edge_feat_size, triplet_feature_size)
+        self.triplet_fc_e2 = Linear(edge_feat_size, triplet_feature_size)
+        self.triplet_fc_e3 = Linear(edge_feat_size, triplet_feature_size)
+        self.triplet_fc_g = Linear(graph_feat_size, triplet_feature_size)
+        self.fc_triplet_out = Linear(triplet_feature_size, out_features)
+        self.activation = activation if activation is not None else nn.Identity()
+
+    def forward(self, z: Tensor, edge_feats: Tensor, graph_feats: Tensor, num_nodes: Optional[Tensor] = None) -> Tensor:
+        B, N, _ = z.size()
+        tri_z1 = self.triplet_fc_z1(z) # [B, N, T]
+        tri_z2 = self.triplet_fc_z2(z) # [B, N, T]
+        tri_z3 = self.triplet_fc_z3(z) # [B, N, T]
+        tri_e1 = self.triplet_fc_e1(edge_feats) # [B, N, N, T]
+        tri_e2 = self.triplet_fc_e2(edge_feats) # [B, N, N, T]
+        tri_e3 = self.triplet_fc_e3(edge_feats) # [B, N, N, T]
+        tri_g = self.triplet_fc_g(graph_feats) # [B, T]
+
+        triplet_tensor =  (
+            tri_z1.unsqueeze(2).unsqueeze(3) +              # [B, N, 1, 1, T]
+            tri_z2.unsqueeze(1).unsqueeze(3) +              # [B, 1, N, 1, T]
+            tri_z3.unsqueeze(1).unsqueeze(2) +              # [B, 1, 1, N, T]
+            tri_e1.unsqueeze(3) +                           # [B, N, N, 1, T]
+            tri_e2.unsqueeze(2) +                           # [B, N, 1, N, T]
+            tri_e3.unsqueeze(1) +                           # [B, 1, N, N, T]
+            tri_g.unsqueeze(1).unsqueeze(2).unsqueeze(3)    # [B, 1, 1, 1, T]
+        )
+        
+
+        if num_nodes is not None:
+            # Create mask for valid nodes and apply it consistently
+            triplet_mask = expand(batch_mask(num_nodes, N, 3), triplet_tensor) #  [B, N, N, N, T]                      # Apply mask and ensure consistent numerical behavior regardless of padding
+            masked_triplet = triplet_tensor.masked_fill(~triplet_mask, float("-inf")) # [B, N, N, N, T]
+            tri_max, _ = masked_triplet.max(dim=1) # [B, N, N, T]
+            edge_mask = batch_mask(num_nodes, N, 2).unsqueeze(-1) # [B, N, N, 1]
+            tri_max = tri_max.masked_fill(~edge_mask, 0.0) # [B, N, N, T]
+        else:
+            tri_max = triplet_tensor.max(dim=1)[0] # [B, N, N, T]            
+
+        tri_msgs = self.fc_triplet_out(tri_max) # [B, N, N, O]
+        tri_msgs = self.activation(tri_msgs) # [B, N, N, O]
+
+        return tri_msgs
 
 class PGN(Processor):
     """
@@ -71,16 +127,16 @@ class PGN(Processor):
             assert triplet_feature_size is not None, "triplet_feature_size must be provided if use_triplets is True"
 
         # Dimension for concatenated node and hidden features (hidden == out_size)
-        mid_input_size = node_feat_size + self.hidden_size
+        z_feat_size = node_feat_size + self.hidden_size
 
         # Message linear transforms
-        self.fc_source = Linear(mid_input_size, self.mid_size)
-        self.fc_target = Linear(mid_input_size, self.mid_size)
+        self.fc_source = Linear(z_feat_size, self.mid_size)
+        self.fc_target = Linear(z_feat_size, self.mid_size)
         self.fc_edge = Linear(edge_feat_size, self.mid_size)
         self.fc_graph = Linear(graph_feat_size, self.mid_size)
 
         # Output transforms
-        self.fc_out_source = Linear(mid_input_size, self.hidden_size)
+        self.fc_out_source = Linear(z_feat_size, self.hidden_size)
         self.fc_out_messages = Linear(self.mid_size, self.hidden_size)
 
         # Optional MLP on raw messages
@@ -105,7 +161,7 @@ class PGN(Processor):
 
         # Gating mechanism
         if gated:
-            self.gate_fc1 = Linear(mid_input_size, self.hidden_size)
+            self.gate_fc1 = Linear(z_feat_size, self.hidden_size)
             self.gate_fc2 = Linear(self.mid_size, self.hidden_size)
             self.gate_fc3 = Linear(self.hidden_size, self.hidden_size)
             nn.init.constant_(self.gate_fc3.bias, -3.0)
@@ -113,14 +169,12 @@ class PGN(Processor):
         # Triplet-based message components
         if use_triplets:
             assert triplet_feature_size is not None, "triplet_feature_size must be provided if use_triplets is True"
-            self.triplet_fc_z1 = Linear(mid_input_size, triplet_feature_size)
-            self.triplet_fc_z2 = Linear(mid_input_size, triplet_feature_size)
-            self.triplet_fc_z3 = Linear(mid_input_size, triplet_feature_size)
-            self.triplet_fc_e1 = Linear(edge_feat_size, triplet_feature_size)
-            self.triplet_fc_e2 = Linear(edge_feat_size, triplet_feature_size)
-            self.triplet_fc_e3 = Linear(edge_feat_size, triplet_feature_size)
-            self.triplet_fc_g = Linear(graph_feat_size, triplet_feature_size)
-            self.fc_triplet_out = Linear(triplet_feature_size, self.hidden_size)
+            self.triplet_nn = TripletNN(node_feat_size=z_feat_size, 
+                                        edge_feat_size=edge_feat_size, 
+                                        graph_feat_size=graph_feat_size, 
+                                        triplet_feature_size=triplet_feature_size, 
+                                        out_features=self.hidden_size,
+                                        activation=self.activation)
 
     @property
     def returns_edge_fts(self):
@@ -145,25 +199,7 @@ class PGN(Processor):
             # Triplet messages calculation (optional)
             tri_msgs = None
             if self.use_triplets and step == self.mp_steps - 1: # compute higher over triplets only on the last step
-                triplet_tensor = self._compute_triplet_messages(z, graph_features.edge_fts, graph_features.graph_fts) # [B, N, N, N, T]
-                if num_nodes is not None:
-                    # Create mask for valid nodes and apply it consistently
-                    node_mask = get_mask(num_nodes, N, 1) # [B, N]
-                    triplet_mask = expand_trailing_dims_as(node_mask, triplet_tensor) # [B, N, N, N, T]                    
-                    # Apply mask and ensure consistent numerical behavior regardless of padding
-                    masked_triplet = triplet_tensor.masked_fill(~triplet_mask, float("-inf"))
-                    # Take max over the first dimension
-                    tri_max, _ = masked_triplet.max(dim=1) # [B, N, N, T]
-                    # Apply mask to output
-                    edge_mask = get_mask(num_nodes, N, 2).unsqueeze(-1) # [B, N, N, 1]
-                    tri_max = torch.where(edge_mask, tri_max, torch.tensor(0.0, dtype=tri_max.dtype, device=tri_max.device))
-                    tri_msgs = self.fc_triplet_out(tri_max) # [B, N, N, O]
-                    tri_msgs = self.activation(tri_msgs) # [B, N, N, O]
-                    tri_msgs = torch.where(edge_mask, tri_msgs, torch.tensor(0.0, dtype=tri_msgs.dtype, device=tri_msgs.device))
-                else:
-                    tri_max = triplet_tensor.max(dim=1)[0] # [B, N, N, T]            
-                    tri_msgs = self.fc_triplet_out(tri_max) # [B, N, N, O]
-                    tri_msgs = self.activation(tri_msgs) # [B, N, N, O]
+                tri_msgs = self.triplet_nn(z, graph_features.edge_fts, graph_features.graph_fts, num_nodes) # [B, N, N, O]
 
             # Combine and transform messages
             msgs = (
@@ -206,33 +242,12 @@ class PGN(Processor):
 
 
             if num_nodes is not None:
-                updated = updated.masked_fill(~expand_trailing_dims_as(get_mask(num_nodes, N, 1), updated), 0.0)
+                updated = updated.masked_fill(~expand(batch_mask(num_nodes, N, 1), updated), 0.0)
 
             processor_state = updated
 
-
-
         return processor_state, tri_msgs
 
-    def _compute_triplet_messages(self, z, edge_feats, graph_feats):
-        tri_z1 = self.triplet_fc_z1(z) # [B, N, T]
-        tri_z2 = self.triplet_fc_z2(z) # [B, N, T]
-        tri_z3 = self.triplet_fc_z3(z) # [B, N, T]
-        tri_e1 = self.triplet_fc_e1(edge_feats) # [B, N, N, T]
-        tri_e2 = self.triplet_fc_e2(edge_feats) # [B, N, N, T]
-        tri_e3 = self.triplet_fc_e3(edge_feats) # [B, N, N, T]
-        tri_g = self.triplet_fc_g(graph_feats) # [B, T]
-
-        result =  (
-            tri_z1.unsqueeze(2).unsqueeze(3) +              # [B, N, 1, 1, T]
-            tri_z2.unsqueeze(1).unsqueeze(3) +              # [B, 1, N, 1, T]
-            tri_z3.unsqueeze(1).unsqueeze(2) +              # [B, 1, 1, N, T]
-            tri_e1.unsqueeze(3) +                           # [B, N, N, 1, T]
-            tri_e2.unsqueeze(2) +                           # [B, N, 1, N, T]
-            tri_e3.unsqueeze(1) +                           # [B, 1, N, N, T]
-            tri_g.unsqueeze(1).unsqueeze(2).unsqueeze(3)    # [B, 1, 1, 1, T]
-        )
-        return result
         
 class DeepSets(PGN):
     """
@@ -244,7 +259,7 @@ class DeepSets(PGN):
         fully_connected = torch.ones_like(graph_features.adj_mat) 
 
         if num_nodes is not None:
-            valid = get_mask(num_nodes, fully_connected.size(-1), 2).type_as(fully_connected)
+            valid = batch_mask(num_nodes, fully_connected.size(-1), 2).type_as(fully_connected)
             fully_connected = fully_connected * valid
 
         graph_features.adj_mat = fully_connected * torch.eye(graph_features.adj_mat.size(-1))
@@ -258,7 +273,7 @@ class MPNN(PGN):
     def forward(self, graph_features: GraphFeatures, processor_state: Tensor, num_nodes: Optional[Tensor] = None) -> Tuple[Tensor, Optional[Tensor]]:
         graph_features.adj_mat = torch.ones_like(graph_features.adj_mat)
         if num_nodes is not None:
-            valid = get_mask(num_nodes, graph_features.adj_mat.size(-1), 2).type_as(graph_features.adj_mat)
+            valid = batch_mask(num_nodes, graph_features.adj_mat.size(-1), 2).type_as(graph_features.adj_mat)
             graph_features.adj_mat = graph_features.adj_mat * valid
         return super().forward(graph_features, processor_state, num_nodes) 
     

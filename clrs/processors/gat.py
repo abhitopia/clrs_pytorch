@@ -4,7 +4,7 @@ from torch import Tensor
 import torch
 from .base import Processor, GraphFeatures
 import torch.nn.functional as F
-from ..utils import Linear, get_mask, expand_trailing_dims_as
+from ..utils import Linear, batch_mask, expand
 
 class GAT(Processor):
     """Graph Attention Network (Velickovic et al., ICLR 2018)."""
@@ -72,7 +72,7 @@ class GAT(Processor):
         bias_mat = bias_mat.permute(0, 3, 1, 2) # [B, H, N, N]
 
         if num_nodes is not None:
-            edge_mask = get_mask(num_nodes, N, 2) # [B, N, N]
+            edge_mask = batch_mask(num_nodes, N, 2) # [B, N, N]
         else:
             edge_mask = graph_features.adj_mat.to(torch.bool) # [B, N, N]
 
@@ -112,7 +112,7 @@ class GAT(Processor):
             ret = self.ln(ret)
 
             if num_nodes is not None:
-                ret = ret.masked_fill(~expand_trailing_dims_as(get_mask(num_nodes, N, 1), ret), 0.0)
+                ret = ret.masked_fill(~expand(batch_mask(num_nodes, N, 1), ret), 0.0)
 
             processor_state = ret
         return processor_state, None
@@ -124,7 +124,7 @@ class GATFull(GAT):
     def forward(self, graph_features: GraphFeatures, processor_state: Optional[Tensor] = None, num_nodes: Optional[int] = None) -> Tuple[Tensor, Optional[Tensor]]:
         graph_features.adj_mat = torch.ones_like(graph_features.adj_mat)
         if num_nodes is not None:
-            valid = get_mask(num_nodes, graph_features.adj_mat.size(-1), 2).type_as(graph_features.adj_mat)
+            valid = batch_mask(num_nodes, graph_features.adj_mat.size(-1), 2).type_as(graph_features.adj_mat)
             graph_features.adj_mat = graph_features.adj_mat * valid
         
         return super().forward(graph_features, processor_state, num_nodes)
@@ -211,7 +211,7 @@ class GATv2(Processor):
 
         # Build a boolean [B,N,N] mask of which (i,j) pairs are valid
         if num_nodes is not None:
-            edge_mask = get_mask(num_nodes, N, 2)             # bool [B,N,N]
+            edge_mask = batch_mask(num_nodes, N, 2)             # bool [B,N,N]
         else:
             edge_mask = graph_features.adj_mat.to(torch.bool) # fallback
 
@@ -253,7 +253,7 @@ class GATv2(Processor):
             ret = self.ln(ret)
 
             if num_nodes is not None:
-                ret = ret.masked_fill(~expand_trailing_dims_as(get_mask(num_nodes, N, 1), ret), 0.0)
+                ret = ret.masked_fill(~expand(batch_mask(num_nodes, N, 1), ret), 0.0)
 
             processor_state = ret
 
@@ -266,7 +266,7 @@ class GATv2Full(GATv2):
   def process(self, graph_features: GraphFeatures, processor_state: Optional[Tensor] = None, num_nodes: Optional[int] = None) -> Tuple[Tensor, Optional[Tensor]]:
         graph_features.adj_mat = torch.ones_like(graph_features.adj_mat)
         if num_nodes is not None:
-            valid = get_mask(num_nodes, graph_features.adj_mat.size(-1), 2).type_as(graph_features.adj_mat)
+            valid = batch_mask(num_nodes, graph_features.adj_mat.size(-1), 2).type_as(graph_features.adj_mat)
             graph_features.adj_mat = graph_features.adj_mat * valid
         
         return super().process(graph_features, processor_state, num_nodes)

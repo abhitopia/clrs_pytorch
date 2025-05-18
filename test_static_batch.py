@@ -3,7 +3,7 @@ from collections import defaultdict
 from pytorch_lightning import seed_everything
 from clrs.processors.base import GraphFeatures
 from clrs.processors.pgn import Reduction
-from clrs.specs import AlgorithmEnum, Feature, Stage, CLRS30Algorithms, Type
+from clrs.specs import AlgorithmEnum, Feature, Location, Stage, CLRS30Algorithms, Type
 from clrs.processors import ProcessorEnum
 from clrs.model import Model, ReconstMode
 from clrs.dataset import get_dataset
@@ -145,27 +145,37 @@ def test_matching_outputs(model: Model, b1: Feature, b2: Feature):
                 v1 = raw_out1[key]
                 v2 = raw_out2[key]
                 try:
-                    if v1.ndim == 2:
-                        mask = expand(batch_mask(n2, NMax, 1), v2)
+
+                    offset = 1 if type_ == Type.CATEGORICAL else 0
+                    num_node_dims = v1.ndim - offset - 1
+                    if num_node_dims > 0:
+                        mask = expand(batch_mask(n2, NMax, num_node_dims), v2)
                         assert (v2[~mask] == fill_value).all()
-                        assert (v1 == v2[:, :NMin]).all()
-                    elif v1.ndim == 3:
-                        mask = expand(batch_mask(n2, NMax, 2), v2)
-                        assert (v2[~mask] == fill_value).all()
-                        assert (v1 == v2[:, :NMin, :NMin]).all()
-                    elif v1.ndim == 4:  # pointer
-                        if type_ == Type.CATEGORICAL:
-                            mask = expand(batch_mask(n2, NMax, 2), v2)
-                            assert (v1 == v2[:, :NMin, :NMin, :]).all()
-                        else:
-                            mask = expand(batch_mask(n2, NMax, 3), v2)
-                            assert (v1 == v2[:, :NMin, :NMin, :NMin]).all()
-                        assert (v2[~mask] == fill_value).all()
-                    elif v1.ndim == 1:
-                        assert (v1 == v2).all()
+                        slice_tuple = [slice(None, None)] + [slice(None, NMin)] * (num_node_dims) + [slice(None, None)] * (offset)
+                        assert (v1 == v2[slice_tuple]).all()
                     else:
-                        raise ValueError(f"Unexpected dimension: {v1.ndim}")
-                except AssertionError as e:
+                        assert (v1 == v2).all()
+
+                    # if v1.ndim - offset == 2:
+                    #     assert (v2[~mask] == fill_value).all()
+                    #     assert (v1 == v2[:, :NMin]).all()
+                    # elif v1.ndim == 3:
+                    #     mask = expand(batch_mask(n2, NMax, 2), v2)
+                    #     assert (v2[~mask] == fill_value).all()
+                    #     assert (v1 == v2[:, :NMin, :NMin]).all()
+                    # elif v1.ndim == 4:  # pointer
+                    #     if type_ == Type.CATEGORICAL:
+                    #         mask = expand(batch_mask(n2, NMax, 2), v2)
+                    #         assert (v1 == v2[:, :NMin, :NMin, :]).all()
+                    #     else:
+                    #         mask = expand(batch_mask(n2, NMax, 3), v2)
+                    #         assert (v1 == v2[:, :NMin, :NMin, :NMin]).all()
+                    #     assert (v2[~mask] == fill_value).all()
+                    # elif v1.ndim == 1:
+                    #     assert (v1 == v2).all()
+                    # else:
+                    #     raise ValueError(f"Unexpected dimension: {v1.ndim}")
+                except Exception as e:
                     print(f"Failed for key: {key} for type: {type_} and location: {location}")
                     import ipdb; ipdb.set_trace()
                     raise e

@@ -130,34 +130,32 @@ def test_matching_outputs(model: Model, b1: Feature, b2: Feature):
         assert (g1.edge_fts == g2.edge_fts[:, :NMin, :NMin, :]).all()
         assert (g1.graph_fts == g2.graph_fts).all()
 
-
-
         pred1, raw_pred1 = model.decoder(g1, num_nodes=None)
         pred2, raw_pred2 = model.decoder(g2, num_nodes=n2)
 
-        # for stage in [Stage.OUTPUT, Stage.HINT]:
-        #     raw_out1 = raw_pred1[stage]
-        #     raw_out2 = raw_pred2[stage]
+        for stage in [Stage.OUTPUT, Stage.HINT]:
+            raw_out1 = raw_pred1[stage]
+            raw_out2 = raw_pred2[stage]
 
-        #     for key in raw_out1.keys():
-        #         _, location, type_, _  = spec[key]
-        #         fill_value = 0.0 if type_ == Type.SCALAR else float("-inf")
-        #         v1 = raw_out1[key]
-        #         v2 = raw_out2[key]
-        #         try:
-        #             offset = 1 if type_ == Type.CATEGORICAL else 0
-        #             num_node_dims = v1.ndim - offset - 1
-        #             if num_node_dims > 0:
-        #                 mask = expand(batch_mask(n2, NMax, num_node_dims), v2)
-        #                 assert (v2[~mask] == fill_value).all()
-        #                 slice_tuple = [slice(None, None)] + [slice(None, NMin)] * (num_node_dims) + [slice(None, None)] * (offset)
-        #                 assert (v1 == v2[slice_tuple]).all()
-        #             else:
-        #                 assert (v1 == v2).all()
-        #         except Exception as e:
-        #             print(f"Failed for key: {key} in stage: {stage} for type: {type_} and location: {location}")
-        #             import ipdb; ipdb.set_trace()
-        #             raise e
+            for key in raw_out1.keys():
+                _, location, type_, _  = spec[key]
+                fill_value = 0.0 if type_ == Type.SCALAR else float("-inf")
+                v1 = raw_out1[key]
+                v2 = raw_out2[key]
+                try:
+                    offset = 1 if type_ == Type.CATEGORICAL else 0
+                    num_node_dims = v1.ndim - offset - 1
+                    if num_node_dims > 0:
+                        mask = expand(batch_mask(n2, NMax, num_node_dims), v2)
+                        assert (v2[~mask] == fill_value).all()
+                        slice_tuple = [slice(None, None)] + [slice(None, NMin)] * (num_node_dims) + [slice(None, None)] * (offset)
+                        assert (v1 == v2[slice_tuple]).all()
+                    else:
+                        assert (v1 == v2).all()
+                except Exception as e:
+                    print(f"Failed for key: {key} in stage: {stage} for type: {type_} and location: {location}")
+                    import ipdb; ipdb.set_trace()
+                    raise e
                 
         for stage in [Stage.OUTPUT, Stage.HINT]:
             pred_out1 = pred1[stage]
@@ -190,7 +188,7 @@ def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_s
     encode_hints = True
     decode_hints = True
     use_lstm = False
-    hint_reconst_mode = ReconstMode.SOFT
+    hint_reconst_mode = ReconstMode.HARD
     hint_teacher_forcing = 0.0
     dropout = 0.0
     reduction = Reduction.MAX

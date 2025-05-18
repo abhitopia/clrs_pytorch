@@ -10,10 +10,14 @@
 - [x] Test that adjacency matrix is correctly computed on static batches
 - [x] Pass the num nodes to the model
 - [x] Test all pgn models
-- [ ] Test all gat models
+- [x] Test all gat models
+
+
+# Next make the evaluation and loss work
+- [ ] Make evaluations mean sin batch dim
+
 - [ ] Add device to get mask
 - [ ] Make decoder work on static batches
-- [ ] Make evaluations mean sin batch dim
 - [ ] Ensure that the output for static batch matches the non-static batch
 
 # Evaluation

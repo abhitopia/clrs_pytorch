@@ -205,7 +205,7 @@ if __name__ == "__main__":
     # algorithms = [AlgorithmEnum.bridges]
     # algorithms = [AlgorithmEnum.insertion_sort]
     processors = list(ProcessorEnum)
-    processors = [ProcessorEnum.pgn]
+    # processors = [ProcessorEnum.pgn_mask]
 
     for processor in processors:
         for algorithm in algorithms:

@@ -322,21 +322,28 @@ class Decoder(nn.Module):
             p_m = torch.maximum(torch.unsqueeze(p_1, -2), p_e.permute(0, 2, 1, 3)) # (batch_size, nb_nodes, nb_nodes, hidden_dim)
             preds = self.decoders[3](p_m).squeeze(-1) # (batch_size, nb_nodes, nb_nodes)
 
+
             if num_nodes is not None:
-                preds = preds.masked_fill(~edge_mask, float("-inf"))  # For pointer, we use -inf
+                preds = preds.masked_fill(~edge_mask, fill_value)  # For pointer, we use -inf
+
 
             if self.inf_bias:
-                import ipdb; ipdb.set_trace()
+                if num_nodes is not None:
+                    # below operation will be hijacked by the -inf bias so we need to take care of it
+                    preds = preds.masked_fill(~edge_mask, float("inf"))  # For pointer, we use -inf
                 per_batch_min = torch.amin(preds, dim=tuple(range(1, preds.dim())),keepdim=True)  # shape: (batch, 1, 1, …)
                 neg_one = torch.tensor(-1.0, device=preds.device, dtype=preds.dtype)
                 # mask preds wherever adj_mat <= 0.5
                 preds = torch.where(graph_features.adj_mat > 0.5, preds, torch.minimum(neg_one, per_batch_min - 1.0))
+
+                if num_nodes is not None:
+                    preds = preds.masked_fill(~edge_mask, fill_value)  # For pointer, we use -inf
+
             if self.type_ == Type.PERMUTATION_POINTER:
                 if not self.training:  # testing or validation, no Gumbel noise
                     preds = log_sinkhorn(x=preds, steps=10, temperature=0.1, zero_diagonal=True, add_noise=False, num_nodes=num_nodes)
                 else:  # training, add Gumbel noise
                     preds = log_sinkhorn(x=preds, steps=10, temperature=0.1, zero_diagonal=True, add_noise=True, num_nodes=num_nodes)
-
         else:
             raise ValueError("Invalid output type")
         return preds
@@ -375,24 +382,31 @@ class Decoder(nn.Module):
         elif self.type_ == Type.POINTER:
             pred_3 = self.decoders[3](graph_features.node_fts) # (B, N, D)
             if num_nodes is not None:
-                pred = pred.masked_fill(~edge_mask, float("-inf"))  # [B, N, N, D]
-                pred_3 = pred_3.masked_fill(~node_mask, float("-inf")) # [B, N, D]
+                pred = pred.masked_fill(~edge_mask, fill_value)  # [B, N, N, D]
+                pred_3 = pred_3.masked_fill(~node_mask, fill_value) # [B, N, D]
             p_m = torch.max(pred.unsqueeze(-2),   # [B, N, N, 1, D]
                             pred_3.unsqueeze(-3).unsqueeze(-3) # [B, 1, 1, N, D]
                         ) # [B, N, N, N, D]
             preds = self.decoders[4](p_m).squeeze(-1) # [B, N, N, N]
             if num_nodes is not None:
                 mask = expand(batch_mask(num_nodes, N, 3), preds) # [B, N, N, N]
-                preds = preds.masked_fill(~mask, float("-inf"))  # For pointer, we use -inf
+                preds = preds.masked_fill(~mask, fill_value)  # For pointer, we use -inf
         else:
             raise ValueError("Invalid output type")
         if self.inf_bias_edge and self.type_ in [Type.MASK, Type.MASK_ONE]:
-            import ipdb; ipdb.set_trace()
-            per_batch_min = torch.amin(preds, dim=tuple(range(1, preds.dim())), keepdim=True)
+            # below operation will be hijacked by the -inf bias so we need to take care of it
+            if num_nodes is not None:
+                preds_inf = preds.masked_fill(~edge_mask.squeeze(-1), float("inf")) 
+                per_batch_min = torch.amin(preds_inf, dim=tuple(range(1, preds.dim())), keepdim=True) # [B, 1, 1]
+            else:
+                per_batch_min = torch.amin(preds, dim=tuple(range(1, preds.dim())), keepdim=True) # [B, 1, 1]
             neg_one = torch.tensor(-1.0, device=preds.device, dtype=preds.dtype)
             preds = torch.where(graph_features.adj_mat > 0.5,
                             preds,
                             torch.minimum(neg_one, per_batch_min - 1.0))
+            
+            if num_nodes is not None:
+                preds = preds.masked_fill(~edge_mask.squeeze(-1), fill_value) 
 
         return preds
     

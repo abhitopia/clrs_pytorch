@@ -396,10 +396,16 @@ class Decoder(nn.Module):
 
         return preds
     
-    def decode_graph_fts(self, graph_features: GraphFeatures) -> Tensor:
+    def decode_graph_fts(self, graph_features: GraphFeatures, num_nodes: Optional[Tensor] = None) -> Tensor:
         """Decodes graph features."""
 
-        gr_emb = torch.max(graph_features.node_fts, dim=-2, keepdim=False).values # (batch_size, node_dim)
+        if num_nodes is not None:
+            node_mask = batch_mask(num_nodes, graph_features.node_fts.size(1), 1).unsqueeze(-1)
+            node_fts = graph_features.node_fts.masked_fill(~node_mask, float("-inf"))
+        else:
+            node_fts = graph_features.node_fts
+
+        gr_emb = torch.max(node_fts, dim=-2, keepdim=False).values # (batch_size, node_dim)
         pred_n = self.decoders[0](gr_emb) # (batch_size, 1/num_cats)
         pred_g = self.decoders[1](graph_features.graph_fts) # (batch_size, 1/num_cats)
         pred = pred_n + pred_g # (batch_size, 1/num_cats)
@@ -408,6 +414,10 @@ class Decoder(nn.Module):
         elif self.type_ == Type.CATEGORICAL:
             preds = pred # (batch_size, num_cats)
         elif self.type_ == Type.POINTER:
+            # I raise the error because in the specs, there is no algorithm that uses pointer output type for graph features
+            raise ValueError("Pointer output type not supported for graph features")
+            
+            # I keep the code here for reference, but it is never reached in the dataset
             pred_2 = self.decoders[2](graph_features.node_fts) # (batch_size, nb_nodes, 1)
             ptr_p = pred.unsqueeze(1) + pred_2.permute(0, 2, 1) # (batch_size, 1, nb_nodes)
             preds = ptr_p.squeeze(1)
@@ -470,7 +480,7 @@ class Decoder(nn.Module):
         elif self.location == Location.EDGE:
             raw_result = self.decode_edge_fts(graph_features, num_nodes)
         elif self.location == Location.GRAPH:
-            raw_result = self.decode_graph_fts(graph_features)
+            raw_result = self.decode_graph_fts(graph_features, num_nodes)
         return self.postprocess(raw_result),raw_result
 
 class Evaluator(nn.Module):

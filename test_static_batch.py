@@ -135,7 +135,7 @@ def test_matching_outputs(model: Model, b1: Feature, b2: Feature):
         pred1, raw_pred1 = model.decoder(g1, num_nodes=None)
         pred2, raw_pred2 = model.decoder(g2, num_nodes=n2)
 
-        for stage in [Stage.OUTPUT]:
+        for stage in [Stage.OUTPUT, Stage.HINT]:
             raw_out1 = raw_pred1[stage]
             raw_out2 = raw_pred2[stage]
 
@@ -155,7 +155,7 @@ def test_matching_outputs(model: Model, b1: Feature, b2: Feature):
                     else:
                         assert (v1 == v2).all()
                 except Exception as e:
-                    print(f"Failed for key: {key} for type: {type_} and location: {location}")
+                    print(f"Failed for key: {key} in stage: {stage} for type: {type_} and location: {location}")
                     import ipdb; ipdb.set_trace()
                     raise e
 

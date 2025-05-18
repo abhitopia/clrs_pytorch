@@ -3,7 +3,7 @@ from collections import defaultdict
 from pytorch_lightning import seed_everything
 from clrs.processors.base import GraphFeatures
 from clrs.processors.pgn import Reduction
-from clrs.specs import AlgorithmEnum, Feature, Stage, CLRS30Algorithms
+from clrs.specs import AlgorithmEnum, Feature, Stage, CLRS30Algorithms, Type
 from clrs.processors import ProcessorEnum
 from clrs.model import Model, ReconstMode
 from clrs.dataset import get_dataset
@@ -43,28 +43,12 @@ def get_batches(algorithm: AlgorithmEnum, batch_size: int, size_small: int, size
     return b1, b2, ds1.specs
 
 
-def test_encoding(model: Model, b1: Feature, b2: Feature):
-
-    # saved = defaultdict(list)
-
-    # # 2) define a hook fn that saves each module's output
-    # def save_hook(mod, inp, out):
-    #     # mod.__class__.__name__ is e.g. "Linear" or "LayerNorm"
-    #     saved[mod].append(out.detach().clone())
-
-    # handles = []
-    # for mod in [model.processor.msgs_dummy,
-    #             model.processor.fc_out_source, 
-    #             model.processor.fc_out_messages, 
-    #             model.processor.layer_norm]:
-    #     handles.append(mod.register_forward_hook(save_hook))
+def test_matching_outputs(model: Model, b1: Feature, b2: Feature):
 
     t1, s1, n1 = b1[0], b1[1], b1[2]
     t2, s2, n2 = b2[0], b2[1], b2[2]
 
-    # global _BIAS_VALUE
-    # _BIAS_VALUE = 1.0
-
+    spec = model.spec
     i1, h1, o1 = t1[Stage.INPUT], t1[Stage.HINT], t1[Stage.OUTPUT]
     i2, h2, o2 = t2[Stage.INPUT], t2[Stage.HINT], t2[Stage.OUTPUT]
 
@@ -119,6 +103,64 @@ def test_encoding(model: Model, b1: Feature, b2: Feature):
         assert (nps1 == nps2[:, :NMin, :]).all()
 
 
+        nfd1 = torch.cat([g1.node_fts, ps1, nps1], dim=-1)
+        nfd2 = torch.cat([g2.node_fts, ps2, nps2], dim=-1)
+        efd1 = g1.edge_fts 
+        efd2 = g2.edge_fts 
+        if nxe1 is not None:
+            efd1 = torch.cat([g1.edge_fts, nxe1], dim=-1)
+            efd2 = torch.cat([g2.edge_fts, nxe2], dim=-1)
+
+        g1 = GraphFeatures(adj_mat=g1.adj_mat, 
+                            node_fts=nfd1, 
+                            edge_fts=efd1, 
+                            graph_fts=g1.graph_fts)
+        g2 = GraphFeatures(adj_mat=g2.adj_mat, 
+                            node_fts=nfd2, 
+                            edge_fts=efd2, 
+                            graph_fts=g2.graph_fts)
+        
+        node_mask = expand(batch_mask(n2, NMax, 1), g2.node_fts) # [B, N]
+
+        assert (g1.adj_mat == g2.adj_mat[:, :NMin, :NMin]).all()
+        assert (g2.adj_mat[~edge_mask] == 0).all()
+        assert (g1.node_fts == g2.node_fts[:, :NMin, :]).all()
+        assert (g2.node_fts[~node_mask] == 0).all()
+        assert (g2.edge_fts[~edge_mask] == 0).all()
+        assert (g1.edge_fts == g2.edge_fts[:, :NMin, :NMin, :]).all()
+        assert (g1.graph_fts == g2.graph_fts).all()
+
+
+
+        pred1, raw_pred1 = model.decoder(g1, num_nodes=None)
+        pred2, raw_pred2 = model.decoder(g2, num_nodes=n2)
+
+        for stage in [Stage.OUTPUT]:
+            raw_out1 = raw_pred1[stage]
+            raw_out2 = raw_pred2[stage]
+
+            for key in raw_out1.keys():
+                _, _, type_, _  = spec[key]
+                fill_value = 0.0 if type_ == Type.SCALAR else float("-inf")
+                v1 = raw_out1[key]
+                v2 = raw_out2[key]
+                if v1.ndim == 2:
+                    mask = expand(batch_mask(n2, NMax, 1), v2)
+                    assert (v2[~mask] == fill_value).all()
+                    assert (v1 == v2[:, :NMin]).all()
+                elif v1.ndim == 3:
+                    mask = expand(batch_mask(n2, NMax, 2), v2)
+                    import ipdb; ipdb.set_trace()
+                    assert (v2[~mask] == 0.0).all()
+                elif v1.ndim == 4:  # pointer
+                    mask = expand(batch_mask(n2, NMax, 3), v2)
+                    assert (v2[~mask] == fill_value).all()
+                    assert (v1 == v2[:, :NMin, :NMin, :NMin]).all()
+                else:
+                    raise ValueError(f"Unexpected dimension: {v1.ndim}")
+
+
+
 def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_small: int, size_large: int):
     clrs.utils.set_bias_value(1.0)
     hidden_dim = 128
@@ -145,7 +187,7 @@ def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_s
                 ).models[algorithm]
     spec = specs[algorithm]
 
-    test_encoding(model, b1[algorithm], b2[algorithm])
+    test_matching_outputs(model, b1[algorithm], b2[algorithm])
 
     clrs.utils.set_bias_value(0.0)
 
@@ -155,7 +197,7 @@ if __name__ == "__main__":
     seed_everything(42)
     algorithms = CLRS30Algorithms
     # algorithms = [AlgorithmEnum.naive_string_matcher]
-    # algorithms = [AlgorithmEnum.matrix_chain_order]
+    algorithms = [AlgorithmEnum.matrix_chain_order]
     # algorithms = [AlgorithmEnum.optimal_bst]
     processors = list(ProcessorEnum)
     processors = [ProcessorEnum.pgn]

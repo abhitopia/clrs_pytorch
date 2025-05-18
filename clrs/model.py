@@ -274,17 +274,38 @@ class Decoder(nn.Module):
                 self.decoders.append(Linear(hidden_dim, 1)) # graph_fts
                 self.decoders.append(Linear(node_dim, 1)) # node_fts
         
-    def decode_node_fts(self, graph_features: GraphFeatures) -> Tensor:
+    def decode_node_fts(self, graph_features: GraphFeatures, num_nodes: Optional[Tensor] = None) -> Tensor:
         """
         graph_features.node_fts shape: (batch_size, nb_nodes, hidden_dim)
         graph_features.edge_fts shape: (batch_size, nb_nodes, nb_nodes, hidden_dim)
         graph_features.adj_mat shape: (batch_size, nb_nodes, nb_nodes)
         graph_features.graph_fts shape: (batch_size, hidden_dim)
         """
+
+        B, N, _ = graph_features.node_fts.size()
+
+        # 1) build masks if padding is present
+        if num_nodes is not None:
+            node_mask = batch_mask(num_nodes, N, 1)        # bool [B, N]
+            edge_mask = batch_mask(num_nodes, N, 2)        # bool [B, N, N]
+            # for elementwise multiplies, we'll need float versions
+            node_mask_float = node_mask.unsqueeze(-1).to(graph_features.node_fts.dtype)  # [B, N, 1]
+            edge_mask_float = edge_mask.unsqueeze(-1).to(graph_features.edge_fts.dtype)  # [B, N, N, 1]
+        else:
+            node_mask = edge_mask = None
+            node_mask_float = edge_mask_float = None
+
         if self.type_ in [Type.SCALAR, Type.MASK, Type.MASK_ONE]:
             preds = self.decoders[0](graph_features.node_fts).squeeze(-1) # (batch_size, nb_nodes)
+            if num_nodes is not None:
+                if self.type_ == Type.SCALAR:
+                    preds = preds * node_mask_float.squeeze(-1)  # zero out padded nodes
+                else:
+                    preds = preds.masked_fill(~node_mask, float("-inf"))
         elif self.type_ == Type.CATEGORICAL:
             preds = self.decoders[0](graph_features.node_fts) # (batch_size, nb_nodes, num_cats)
+            if num_nodes is not None:
+                preds = preds.masked_fill(~node_mask.unsqueeze(-1), float("-inf"))
         elif self.type_ in [Type.POINTER, Type.PERMUTATION_POINTER]:
             p_1 = self.decoders[0](graph_features.node_fts) # (batch_size, nb_nodes, hidden_dim)
             p_2 = self.decoders[1](graph_features.node_fts) # (batch_size, nb_nodes, hidden_dim)
@@ -317,27 +338,40 @@ class Decoder(nn.Module):
         """
         """Decodes edge features."""
 
-        N = graph_features.edge_fts.size(-2)
+        B, N, _ = graph_features.node_fts.size()
+        dtype = graph_features.node_fts.dtype
+
 
         pred_1 = self.decoders[0](graph_features.node_fts) # (batch_size, nb_nodes, 1/num_cats/hidden_dim)
         pred_2 = self.decoders[1](graph_features.node_fts) # (batch_size, nb_nodes, 1/num_cats/hidden_dim)
         pred_e = self.decoders[2](graph_features.edge_fts) # (batch_size, nb_nodes, nb_nodes, 1/num_cats/hidden_dim)
         pred = (torch.unsqueeze(pred_1, -2) + torch.unsqueeze(pred_2, -3) + pred_e) # (batch_size, nb_nodes, nb_nodes, 1/num_cats/hidden_dim)
 
-        if self.type_ in [Type.SCALAR, Type.MASK, Type.MASK_ONE]:
-            preds = pred.squeeze(-1)
-        elif self.type_ == Type.CATEGORICAL:
-            preds = pred
-        elif self.type_ == Type.POINTER:
-            pred_2 = self.decoders[3](graph_features.node_fts) # (batch_size, nb_nodes, hidden_dim)
+        # 1) build masks if padding is present
+        if num_nodes is not None:
+            node_mask = batch_mask(num_nodes, N, 1).unsqueeze(-1)  # [B, N, 1]
+            edge_mask = batch_mask(num_nodes, N, 2).unsqueeze(-1) # [B, N, N, 1]
+        else:
+            node_mask = edge_mask = None
+
+        fill_value = 0.0 if self.type_  == Type.SCALAR else float("-inf")
+
+        if self.type_ in [Type.SCALAR, Type.MASK, Type.MASK_ONE, Type.CATEGORICAL]:
             if num_nodes is not None:
-                pred_2 = pred_2.masked_fill(~expand(batch_mask(num_nodes, N, 1), pred_2), float("-inf"))
-                pred = pred.masked_fill(~expand(batch_mask(num_nodes, N, 2), pred), float("-inf"))
-                p_m = torch.max(pred.unsqueeze(-2), pred_2.unsqueeze(-3).unsqueeze(-3)) # (batch_size, nb_nodes, nb_nodes, nb_nodes, hidden_dim)
-                p_m = torch.where(expand(batch_mask(num_nodes, N, 3), p_m), p_m, torch.tensor(0.0, device=p_m.device, dtype=p_m.dtype))
-            else:
-                p_m = torch.max(pred.unsqueeze(-2), pred_2.unsqueeze(-3).unsqueeze(-3)) # (batch_size, nb_nodes, nb_nodes, nb_nodes, hidden_dim)
-            preds = self.decoders[4](p_m).squeeze(-1) # (batch_size, nb_nodes, nb_nodes, nb_nodes)
+                pred = pred.masked_fill(~edge_mask, fill_value)
+            preds = pred.squeeze(-1) if self.type_ == Type.SCALAR else pred
+        elif self.type_ == Type.POINTER:
+            pred_3 = self.decoders[3](graph_features.node_fts) # (B, N, D)
+            if num_nodes is not None:
+                pred = pred.masked_fill(~edge_mask, float("-inf"))  # [B, N, N, D]
+                pred_3 = pred_3.masked_fill(~node_mask, float("-inf")) # [B, N, D]
+            p_m = torch.max(pred.unsqueeze(-2),   # [B, N, N, 1, D]
+                            pred_3.unsqueeze(-3).unsqueeze(-3) # [B, 1, 1, N, D]
+                        ) # [B, N, N, N, D]
+            preds = self.decoders[4](p_m).squeeze(-1) # [B, N, N, N]
+            if num_nodes is not None:
+                mask = expand(batch_mask(num_nodes, N, 3), preds) # [B, N, N, N]
+                preds = preds.masked_fill(~mask, float("-inf"))  # For pointer, we use -inf
         else:
             raise ValueError("Invalid output type")
         if self.inf_bias_edge and self.type_ in [Type.MASK, Type.MASK_ONE]:
@@ -420,7 +454,7 @@ class Decoder(nn.Module):
 
     def decode(self, graph_features: GraphFeatures, num_nodes: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
         if self.location == Location.NODE:
-            raw_result = self.decode_node_fts(graph_features)
+            raw_result = self.decode_node_fts(graph_features, num_nodes)
         elif self.location == Location.EDGE:
             raw_result = self.decode_edge_fts(graph_features, num_nodes)
         elif self.location == Location.GRAPH:
@@ -718,6 +752,7 @@ class AlgoModel(torch.nn.Module):
         self.hidden_dim = hidden_dim
         self.encode_hints = encode_hints
         self.decode_hints = decode_hints
+        self.spec = spec
         self.hint_teacher_forcing = hint_teacher_forcing
         self.dropout = nn.Dropout(dropout)
         self.encoder = AlgoEncoder(spec, hidden_dim, encode_hints)
@@ -761,6 +796,7 @@ class AlgoModel(torch.nn.Module):
         nxt_processor_state, nxt_edge = self.processor(
             graph_features,
             processor_state=nxt_processor_state, # hidden for GNN processor within the step's mp_steps
+            num_nodes=num_nodes
         )
 
         # Output of GNN processing for this step becomes input to LSTM (if used)
@@ -782,7 +818,7 @@ class AlgoModel(torch.nn.Module):
                                            edge_fts=edge_fts_decoder, 
                                            graph_fts=graph_features.graph_fts)
         
-        prediction_step, raw_prediction_step = self.decoder(graph_features_decoder)
+        prediction_step, raw_prediction_step = self.decoder(graph_features_decoder, num_nodes=num_nodes)
         return prediction_step, raw_prediction_step, nxt_processor_state, nxt_lstm_state
     
     @staticmethod

@@ -10,7 +10,7 @@ import torch
 from .utils import tree_map
 from .trainer_utils import CustomRichProgressBar, normalize_state_dict, ModelCheckpointWithWandbSync
 from .specs import CLRS30Algorithms, AlgorithmEnum, Spec
-from .processors import ProcessorFactory
+from .processors import ProcessorEnum
 from .model import Model, ReconstMode
 from .dataset import get_dataset, get_dataloader
 
@@ -117,9 +117,9 @@ class TrainerConfig:
             "mp_steps": self.mp_steps
         }
         if len(self.algos) == 1:
-            processor = ProcessorFactory.triplet_gmpnn(**processors_kwargs)
+            processor = ProcessorEnum.triplet_gmpnn(**processors_kwargs)
         else:
-            processor = ProcessorFactory.triplet_mpnn(**processors_kwargs)
+            processor = ProcessorEnum.triplet_mpnn(**processors_kwargs)
 
 
         model = Model(specs=self.specs,

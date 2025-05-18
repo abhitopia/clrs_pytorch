@@ -67,6 +67,9 @@ class TripletNN(nn.Module):
         tri_msgs = self.fc_triplet_out(tri_max) # [B, N, N, O]
         tri_msgs = self.activation(tri_msgs) # [B, N, N, O]
 
+        if num_nodes is not None:
+            tri_msgs = tri_msgs.masked_fill(~edge_mask, 0.0)
+
         return tri_msgs
 
 class PGN(Processor):

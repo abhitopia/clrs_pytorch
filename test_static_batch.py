@@ -1,4 +1,6 @@
 import torch
+from collections import defaultdict
+from pytorch_lightning import seed_everything
 from clrs.processors.base import GraphFeatures
 from clrs.specs import AlgorithmEnum, Feature, Stage, CLRS30Algorithms
 from clrs.processors import ProcessorEnum
@@ -42,6 +44,20 @@ def get_batches(algorithm: AlgorithmEnum, batch_size: int, size_small: int, size
 
 def test_encoding(model: Model, b1: Feature, b2: Feature):
 
+    # saved = defaultdict(list)
+
+    # # 2) define a hook fn that saves each module's output
+    # def save_hook(mod, inp, out):
+    #     # mod.__class__.__name__ is e.g. "Linear" or "LayerNorm"
+    #     saved[mod].append(out.detach().clone())
+
+    # handles = []
+    # for mod in [model.processor.msgs_dummy,
+    #             model.processor.fc_out_source, 
+    #             model.processor.fc_out_messages, 
+    #             model.processor.layer_norm]:
+    #     handles.append(mod.register_forward_hook(save_hook))
+
     t1, s1, n1 = b1[0], b1[1], b1[2]
     t2, s2, n2 = b2[0], b2[1], b2[2]
 
@@ -62,29 +78,71 @@ def test_encoding(model: Model, b1: Feature, b2: Feature):
     ps2 = torch.zeros((batch_size, NMax, hidden_dim))
 
     for step in range(num_steps):
+        print(f"Step {step}")
+        # saved.clear()
+
         h1_step = model.get_hint_at_step(h1, step)
         h2_step = model.get_hint_at_step(h2, step)
+
+        # import ipdb; ipdb.set_trace()
+        allowed_h_keys = ['root_h']
+        h1_step = {k: v for k, v in h1_step.items() if k in allowed_h_keys}
+        h2_step = {k: v for k, v in h2_step.items() if k in allowed_h_keys}
 
         g1 = model.encoder(i1, h1_step, None)
         g2 = model.encoder(i2, h2_step, n2)
 
-        node_mask = expand(batch_mask(n2, NMax, 1), g2.node_fts)
+        node_mask = expand(batch_mask(n2, NMax, 1), g2.node_fts) # [B, N]
         edge_mask = batch_mask(n2, NMax, 2)
 
         assert (g1.adj_mat == g2.adj_mat[:, :NMin, :NMin]).all()
         assert (g2.adj_mat[~edge_mask] == 0).all()
         assert (g1.node_fts == g2.node_fts[:, :NMin, :]).all()
         assert (g2.node_fts[~node_mask] == 0).all()
+        assert (g2.edge_fts[~edge_mask] == 0).all()
+        assert (g1.edge_fts == g2.edge_fts[:, :NMin, :NMin, :]).all()
         assert (g1.graph_fts == g2.graph_fts).all()
 
         # nps1, nxe1 = model.processor(g1, processor_state=ps1, num_nodes=None)
+        # # saved_u = {mod: torch.stack(tensors) for mod, tensors in saved.items()}
+        # # saved.clear()
         # nps2, nxe2 = model.processor(g2, processor_state=ps2, num_nodes=n2)
 
-        # assert (nps1[:, :, :] - nps2[:, :NMin, :]).abs().max() < 1e-6
+        # if nps2.ndim == 4:
+        #     assert (nps2[~(expand(edge_mask, nps2))] == 0).all()
+        #     assert (nps1 == nps2[:, :NMin, :NMin, :]).all()
+        # else:
+        #     assert (nps2[~node_mask] == 0).all()
+        #     assert (nps1 == nps2[:, :NMin, :]).all()
+
+        # saved_p = {mod: torch.stack(tensors) for mod, tensors in saved.items()}
+        # saved.clear()
+
+        # import ipdb; ipdb.set_trace()
+
+        # # 5) compare the saved outputs module-by-module
+        # for mod in saved_u:
+        #     u = saved_u[mod]     # shape [num_hooks, B, N_i, ...]
+        #     p = saved_p.get(mod)
+        #     # if p is None, you didn’t hook that module in the second run
+        #     if p is not None:
+        #         # slice off the padded region in p before comparing
+        #         p_trim = p[:, :, :NMin, ...]
+        #         delta = torch.max(torch.abs(u - p_trim)).item()
+        #         print(f"{mod.__class__.__name__}: max abs diff = {delta:.2e}")
+
+        # # 6) clean up your hooks
+        # for h in handles:
+        #     h.remove()
+
+        # import ipdb; ipdb.set_trace()
+        # assert (nps2[~node_mask] == 0).all()
+        # import ipdb; ipdb.set_trace()
+        # assert (nps1 == nps2[:, :NMin, :]).all()
 
 
 def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_small: int, size_large: int):
-    clrs.utils.set_bias_value(1.0)
+    clrs.utils.set_bias_value(0.0)
     hidden_dim = 128
     batch_size = 32
     encode_hints = True
@@ -112,9 +170,11 @@ def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_s
 
 
 if __name__ == "__main__":
-
+    seed_everything(42)
     algorithms = CLRS30Algorithms
     # algorithms = [AlgorithmEnum.naive_string_matcher]
+    # algorithms = [AlgorithmEnum.matrix_chain_order]
+    # algorithms = [AlgorithmEnum.optimal_bst]
     # processors = list(ProcessorEnum)
     processors = [ProcessorEnum.pgn]
 
@@ -124,5 +184,5 @@ if __name__ == "__main__":
             test_static_batch(algorithm, 
                             processor, 
                             size_small=4, 
-                            size_large=16)
+                            size_large=12)
         print(f"Testing {algorithm.name} passed")

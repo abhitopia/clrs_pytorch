@@ -132,7 +132,7 @@ class Encoder(nn.Module):
             # Edge pointers need two-way encoders
             self.encoders.append(Linear(1, hidden_dim))
 
-    def encode_to_adj_mat(self, data: Tensor, adj_mat: Tensor) -> Tensor:
+    def encode_to_adj_mat(self, data: Tensor, adj_mat: Tensor, num_nodes: Optional[Tensor] = None) -> Tensor:
         if self.location == Location.NODE and self.type_ in [Type.POINTER, Type.PERMUTATION_POINTER]:
             adj_mat += ((data + data.permute(0, 2, 1)) > 0.5)
         elif self.location == Location.EDGE and self.type_ == Type.MASK:
@@ -156,18 +156,33 @@ class Encoder(nn.Module):
             data = data.unsqueeze(-1)
 
         if self.location == Location.NODE and self.type_ in [Type.POINTER, Type.PERMUTATION_POINTER]:
-            encoding = self.encoders[0](data)
+            encoding = self.encoders[0](data) # [B, N, H]
             edge_fts += encoding
         elif self.location == Location.EDGE:
-            encoding = self.encoders[0](data)
+            encoding = self.encoders[0](data) 
             if self.type_ == Type.POINTER:
                 # Aggregate pointer contributions across sender and receiver nodes.
-                encoding_2 = self.encoders[1](data)
-                if num_nodes is not None:
-                    sum_2dims = torch.sum(encoding, dim=1) + torch.sum(encoding_2, dim=2)
-                    edge_fts += sum_2dims/expand(num_nodes, sum_2dims)
+                encoding_2 = self.encoders[1](data) # [B, N, N, N, H]
+
+                if num_nodes is None:
+                    # exactly your old behavior
+                    mean_s = encoding.mean(dim=1)    # [B, N, N, T]
+                    mean_r = encoding_2.mean(dim=2)  # [B, N, N, T]
                 else:
-                    edge_fts += torch.mean(encoding, dim=1) + torch.mean(encoding_2, dim=2)
+                    B, N, _, _, _ = encoding_2.shape
+                    # 1) build masks for senders / receivers
+                    edge_mask = batch_mask(num_nodes, N, 3).unsqueeze(-1).type_as(encoding_2)        # [B, N, N, N, 1]
+                    sum_s =  torch.sum(encoding * edge_mask, dim=1) # [B, N, N, H]
+                    sum_r =  torch.sum(encoding_2 * edge_mask, dim=2) # [B, N, N, H]
+
+                    # # 3) divide by the true neighbor count
+                    counts = num_nodes.view(B, 1, 1, 1).to(encoding.dtype)   # [B,1,1,1]
+                    mean_s = sum_s / counts                                    # [B,N, N, H]
+                    mean_r = sum_r / counts                                    # [B, N, N, H]
+
+
+                # import ipdb; ipdb.set_trace()
+                edge_fts += mean_s + mean_r
         return edge_fts
 
     def encode_to_graph_fts(self, data: Tensor, graph_fts: Tensor) -> Tensor:

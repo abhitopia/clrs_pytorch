@@ -440,7 +440,7 @@ class Decoder(nn.Module):
 
         return preds
 
-    def postprocess(self, data: Tensor) -> Tensor:
+    def postprocess(self, data: Tensor, num_nodes: Optional[Tensor] = None) -> Tensor:
         """Postprocesses decoder output """
 
         if self.hard_mode == ReconstMode.HARD:
@@ -479,12 +479,20 @@ class Decoder(nn.Module):
                 steps=self.sinkhorn_steps,
                 temperature=self.sinkhorn_temp,
                 zero_diagonal=True,
+                num_nodes=num_nodes,
                 add_noise=False)
             data = torch.exp(data)
             if hard:
                 data = F.one_hot(data.argmax(dim=-1), data.shape[-1])
         else:
             raise ValueError("Invalid type")
+        
+        if num_nodes is not None:
+            offset = 1 if self.type_ == Type.CATEGORICAL else 0
+            num_node_dims = data.ndim - offset - 1
+            if num_node_dims > 0:
+                mask = expand(batch_mask(num_nodes, data.shape[1], num_node_dims), data)
+                data = data.masked_fill(~mask, 0.0)
 
         return data
 
@@ -495,7 +503,7 @@ class Decoder(nn.Module):
             raw_result = self.decode_edge_fts(graph_features, num_nodes)
         elif self.location == Location.GRAPH:
             raw_result = self.decode_graph_fts(graph_features, num_nodes)
-        return self.postprocess(raw_result),raw_result
+        return self.postprocess(raw_result, num_nodes),raw_result
 
 class Evaluator(nn.Module):
     def __init__(self, type_: Type, stage: Stage):

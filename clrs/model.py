@@ -326,15 +326,17 @@ class Decoder(nn.Module):
                 preds = preds.masked_fill(~edge_mask, float("-inf"))  # For pointer, we use -inf
 
             if self.inf_bias:
+                import ipdb; ipdb.set_trace()
                 per_batch_min = torch.amin(preds, dim=tuple(range(1, preds.dim())),keepdim=True)  # shape: (batch, 1, 1, …)
                 neg_one = torch.tensor(-1.0, device=preds.device, dtype=preds.dtype)
                 # mask preds wherever adj_mat <= 0.5
                 preds = torch.where(graph_features.adj_mat > 0.5, preds, torch.minimum(neg_one, per_batch_min - 1.0))
             if self.type_ == Type.PERMUTATION_POINTER:
                 if not self.training:  # testing or validation, no Gumbel noise
-                    preds = log_sinkhorn(x=preds, steps=10, temperature=0.1, zero_diagonal=True, add_noise=False)
+                    preds = log_sinkhorn(x=preds, steps=10, temperature=0.1, zero_diagonal=True, add_noise=False, num_nodes=num_nodes)
                 else:  # training, add Gumbel noise
-                    preds = log_sinkhorn(x=preds, steps=10, temperature=0.1, zero_diagonal=True, add_noise=True)
+                    preds = log_sinkhorn(x=preds, steps=10, temperature=0.1, zero_diagonal=True, add_noise=True, num_nodes=num_nodes)
+
         else:
             raise ValueError("Invalid output type")
         return preds

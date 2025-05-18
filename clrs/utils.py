@@ -107,7 +107,7 @@ class Linear(nn.Linear):
 
 
 
-def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool, add_noise: bool = True) -> Tensor:
+def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool, add_noise: bool = True, num_nodes: Optional[int] = None) -> Tensor:
     """Sinkhorn operator in log space, to postprocess permutation pointer logits.
 
     Args:
@@ -131,11 +131,24 @@ def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool,
         x = x + noise
 
     x = x / temperature    # Can't do in-place or pytorch gods will scream!
+
+
     if zero_diagonal:
-        x = x - 1e6 * torch.eye(x.shape[-1], device=x.device)
+        eye = torch.eye(x.shape[-1], device=x.device, dtype=torch.bool)
+        x = x.masked_fill(eye.unsqueeze(0), float('-inf'))
+
+    if num_nodes is not None:
+        edge_mask = expand(batch_mask(num_nodes, x.size(-1), 2), x)
+
     for _ in range(steps):
         x = torch.log_softmax(x, dim=-1)
+        if num_nodes is not None:
+            x = x.masked_fill(~edge_mask, float('-inf'))
+    
         x = torch.log_softmax(x, dim=-2)
+        if num_nodes is not None:
+            x = x.masked_fill(~edge_mask, float('-inf'))
+
     return x
 
 def np_one_hot(labels: np.ndarray, num_classes: Optional[int] = None) -> np.ndarray:

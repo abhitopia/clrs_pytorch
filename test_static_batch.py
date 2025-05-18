@@ -145,7 +145,6 @@ def test_matching_outputs(model: Model, b1: Feature, b2: Feature):
                 v1 = raw_out1[key]
                 v2 = raw_out2[key]
                 try:
-
                     offset = 1 if type_ == Type.CATEGORICAL else 0
                     num_node_dims = v1.ndim - offset - 1
                     if num_node_dims > 0:
@@ -155,26 +154,6 @@ def test_matching_outputs(model: Model, b1: Feature, b2: Feature):
                         assert (v1 == v2[slice_tuple]).all()
                     else:
                         assert (v1 == v2).all()
-
-                    # if v1.ndim - offset == 2:
-                    #     assert (v2[~mask] == fill_value).all()
-                    #     assert (v1 == v2[:, :NMin]).all()
-                    # elif v1.ndim == 3:
-                    #     mask = expand(batch_mask(n2, NMax, 2), v2)
-                    #     assert (v2[~mask] == fill_value).all()
-                    #     assert (v1 == v2[:, :NMin, :NMin]).all()
-                    # elif v1.ndim == 4:  # pointer
-                    #     if type_ == Type.CATEGORICAL:
-                    #         mask = expand(batch_mask(n2, NMax, 2), v2)
-                    #         assert (v1 == v2[:, :NMin, :NMin, :]).all()
-                    #     else:
-                    #         mask = expand(batch_mask(n2, NMax, 3), v2)
-                    #         assert (v1 == v2[:, :NMin, :NMin, :NMin]).all()
-                    #     assert (v2[~mask] == fill_value).all()
-                    # elif v1.ndim == 1:
-                    #     assert (v1 == v2).all()
-                    # else:
-                    #     raise ValueError(f"Unexpected dimension: {v1.ndim}")
                 except Exception as e:
                     print(f"Failed for key: {key} for type: {type_} and location: {location}")
                     import ipdb; ipdb.set_trace()
@@ -206,6 +185,8 @@ def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_s
                 hint_teacher_forcing=hint_teacher_forcing,
                 dropout=dropout
                 ).models[algorithm]
+    
+    model.eval()  # This is important to prevent noise from being injected in log_sinkhorn
     spec = specs[algorithm]
 
     test_matching_outputs(model, b1[algorithm], b2[algorithm])
@@ -222,6 +203,7 @@ if __name__ == "__main__":
     # algorithms = [AlgorithmEnum.lcs_length]
     # algorithms = [AlgorithmEnum.dfs]
     # algorithms = [AlgorithmEnum.bridges]
+    # algorithms = [AlgorithmEnum.insertion_sort]
     processors = list(ProcessorEnum)
     processors = [ProcessorEnum.pgn]
 

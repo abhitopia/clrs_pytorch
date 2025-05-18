@@ -140,24 +140,35 @@ def test_matching_outputs(model: Model, b1: Feature, b2: Feature):
             raw_out2 = raw_pred2[stage]
 
             for key in raw_out1.keys():
-                _, _, type_, _  = spec[key]
+                _, location, type_, _  = spec[key]
                 fill_value = 0.0 if type_ == Type.SCALAR else float("-inf")
                 v1 = raw_out1[key]
                 v2 = raw_out2[key]
-                if v1.ndim == 2:
-                    mask = expand(batch_mask(n2, NMax, 1), v2)
-                    assert (v2[~mask] == fill_value).all()
-                    assert (v1 == v2[:, :NMin]).all()
-                elif v1.ndim == 3:
-                    mask = expand(batch_mask(n2, NMax, 2), v2)
+                try:
+                    if v1.ndim == 2:
+                        mask = expand(batch_mask(n2, NMax, 1), v2)
+                        assert (v2[~mask] == fill_value).all()
+                        assert (v1 == v2[:, :NMin]).all()
+                    elif v1.ndim == 3:
+                        mask = expand(batch_mask(n2, NMax, 2), v2)
+                        assert (v2[~mask] == fill_value).all()
+                        assert (v1 == v2[:, :NMin, :NMin]).all()
+                    elif v1.ndim == 4:  # pointer
+                        if type_ == Type.CATEGORICAL:
+                            mask = expand(batch_mask(n2, NMax, 2), v2)
+                            assert (v1 == v2[:, :NMin, :NMin, :]).all()
+                        else:
+                            mask = expand(batch_mask(n2, NMax, 3), v2)
+                            assert (v1 == v2[:, :NMin, :NMin, :NMin]).all()
+                        assert (v2[~mask] == fill_value).all()
+                    elif v1.ndim == 1:
+                        assert (v1 == v2).all()
+                    else:
+                        raise ValueError(f"Unexpected dimension: {v1.ndim}")
+                except AssertionError as e:
+                    print(f"Failed for key: {key} for type: {type_} and location: {location}")
                     import ipdb; ipdb.set_trace()
-                    assert (v2[~mask] == 0.0).all()
-                elif v1.ndim == 4:  # pointer
-                    mask = expand(batch_mask(n2, NMax, 3), v2)
-                    assert (v2[~mask] == fill_value).all()
-                    assert (v1 == v2[:, :NMin, :NMin, :NMin]).all()
-                else:
-                    raise ValueError(f"Unexpected dimension: {v1.ndim}")
+                    raise e
 
 
 
@@ -197,8 +208,10 @@ if __name__ == "__main__":
     seed_everything(42)
     algorithms = CLRS30Algorithms
     # algorithms = [AlgorithmEnum.naive_string_matcher]
-    algorithms = [AlgorithmEnum.matrix_chain_order]
-    # algorithms = [AlgorithmEnum.optimal_bst]
+    # algorithms = [AlgorithmEnum.matrix_chain_order]
+    # algorithms = [AlgorithmEnum.lcs_length]
+    # algorithms = [AlgorithmEnum.dfs]
+    # algorithms = [AlgorithmEnum.bridges]
     processors = list(ProcessorEnum)
     processors = [ProcessorEnum.pgn]
 

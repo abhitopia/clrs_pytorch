@@ -295,25 +295,35 @@ class Decoder(nn.Module):
             node_mask = edge_mask = None
             node_mask_float = edge_mask_float = None
 
+        fill_value = 0.0 if self.type_  == Type.SCALAR else float("-inf")
+
         if self.type_ in [Type.SCALAR, Type.MASK, Type.MASK_ONE]:
             preds = self.decoders[0](graph_features.node_fts).squeeze(-1) # (batch_size, nb_nodes)
             if num_nodes is not None:
                 if self.type_ == Type.SCALAR:
                     preds = preds * node_mask_float.squeeze(-1)  # zero out padded nodes
                 else:
-                    preds = preds.masked_fill(~node_mask, float("-inf"))
+                    preds = preds.masked_fill(~node_mask, fill_value)
         elif self.type_ == Type.CATEGORICAL:
             preds = self.decoders[0](graph_features.node_fts) # (batch_size, nb_nodes, num_cats)
             if num_nodes is not None:
-                preds = preds.masked_fill(~node_mask.unsqueeze(-1), float("-inf"))
+                preds = preds.masked_fill(~node_mask.unsqueeze(-1), fill_value)
         elif self.type_ in [Type.POINTER, Type.PERMUTATION_POINTER]:
             p_1 = self.decoders[0](graph_features.node_fts) # (batch_size, nb_nodes, hidden_dim)
             p_2 = self.decoders[1](graph_features.node_fts) # (batch_size, nb_nodes, hidden_dim)
             p_3 = self.decoders[2](graph_features.edge_fts) # (batch_size, nb_nodes, nb_nodes, hidden_dim)
 
             p_e = torch.unsqueeze(p_2, -2) + p_3 # (batch_size, nb_nodes, nb_nodes, hidden_dim)
+
+            if num_nodes is not None:
+                p_1 = p_1.masked_fill(~node_mask.unsqueeze(-1), fill_value)
+                p_e = p_e.masked_fill(~edge_mask.unsqueeze(-1), fill_value)
+
             p_m = torch.maximum(torch.unsqueeze(p_1, -2), p_e.permute(0, 2, 1, 3)) # (batch_size, nb_nodes, nb_nodes, hidden_dim)
             preds = self.decoders[3](p_m).squeeze(-1) # (batch_size, nb_nodes, nb_nodes)
+
+            if num_nodes is not None:
+                preds = preds.masked_fill(~edge_mask, float("-inf"))  # For pointer, we use -inf
 
             if self.inf_bias:
                 per_batch_min = torch.amin(preds, dim=tuple(range(1, preds.dim())),keepdim=True)  # shape: (batch, 1, 1, …)
@@ -359,7 +369,7 @@ class Decoder(nn.Module):
         if self.type_ in [Type.SCALAR, Type.MASK, Type.MASK_ONE, Type.CATEGORICAL]:
             if num_nodes is not None:
                 pred = pred.masked_fill(~edge_mask, fill_value)
-            preds = pred.squeeze(-1) if self.type_ == Type.SCALAR else pred
+            preds = pred.squeeze(-1) if self.type_ != Type.CATEGORICAL else pred
         elif self.type_ == Type.POINTER:
             pred_3 = self.decoders[3](graph_features.node_fts) # (B, N, D)
             if num_nodes is not None:

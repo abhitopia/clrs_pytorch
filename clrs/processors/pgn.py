@@ -187,9 +187,14 @@ class PGN(Processor):
         B, N, _ = graph_features.node_fts.size()
         assert processor_state.size(-1) == self.hidden_size, \
             f"Hidden dimension ({processor_state.size(-1)}) must equal out_size ({self.out_size})"
+        
 
-        m_edge = self.fc_edge(graph_features.edge_fts) # [B, N, M]
-        m_graph = self.fc_graph(graph_features.graph_fts) # [B, N, M]
+        m_edge = self.fc_edge(graph_features.edge_fts) # [B, N, N, M]
+        m_graph = self.fc_graph(graph_features.graph_fts) # [B, M]
+
+        if num_nodes is not None:
+            edge_mask = batch_mask(num_nodes, N, 2) # [B, N, N]
+            node_mask = batch_mask(num_nodes, N, 1) # [B, N]
 
         for step in range(self.mp_steps):
             # Combine node and hidden features
@@ -213,21 +218,27 @@ class PGN(Processor):
             )
 
             msgs = self.msgs_mlp(msgs)  # [B, N, N, M]
-
-            # Aggregate messages over neighbors
             if self.reduction == Reduction.MEAN:
-                msgs = (msgs * graph_features.adj_mat.unsqueeze(-1)).sum(dim=1) # [B, N, M]
-                msgs = msgs / (graph_features.adj_mat.sum(dim=-1, keepdim=True) + 1e-6) # [B, N, M]
-            elif self.reduction == Reduction.MAX:
-                mask = graph_features.adj_mat.unsqueeze(-1) == 0 # [B, N, N, 1]
-                msgs = msgs.masked_fill(mask, float('-1e9')) # [B, N, N, M]
-                msgs = msgs.max(dim=1)[0] # [B, N, M]
-            elif self.reduction == Reduction.MIN:
-                mask = graph_features.adj_mat.unsqueeze(-1) == 0 # [B, N, N, 1]
-                msgs = msgs.masked_fill(mask, float('1e9')) # [B, N, N, M]
-                msgs = msgs.min(dim=1)[0] # [B, N, M]
+                adj = graph_features.adj_mat.to(msgs.dtype) # [B, N, N]
+                if num_nodes is not None:
+                    adj = adj * edge_mask
+                # weighted sum over the neighbours, then divide by the number of neighbours
+                weighted_sum  = (msgs * adj.unsqueeze(-1)).sum(dim=1) # [B, N, M]
+                counts = adj.sum(dim=-1, keepdim=True).clamp(min=1) # [B, N, 1]
+                msgs = weighted_sum / counts # [B, N, M]
+            elif self.reduction == Reduction.MAX or self.reduction == Reduction.MIN:
+                mask = graph_features.adj_mat == 0 # [B, N, N, 1]
+                if num_nodes is not None:
+                    mask = mask | ~edge_mask  
+                fill_value = float('-inf') if self.reduction == Reduction.MAX else float('inf')
+                msgs = msgs.masked_fill(mask.unsqueeze(-1), fill_value) # [B, N, N, M]
+                msgs = msgs.max(dim=1)[0] if self.reduction == Reduction.MAX else msgs.min(dim=1)[0]# [B, N, M]
             else:
                 raise ValueError(f"Invalid reduction: {self.reduction}")
+
+            
+            if num_nodes is not None:
+                msgs = torch.where(node_mask.unsqueeze(-1), msgs, 0.0)
 
             # Update node features
             h1 = self.fc_out_source(z) # [B, N, O]
@@ -245,7 +256,7 @@ class PGN(Processor):
 
 
             if num_nodes is not None:
-                updated = updated.masked_fill(~expand(batch_mask(num_nodes, N, 1), updated), 0.0)
+                updated = updated.masked_fill(~node_mask.unsqueeze(-1), 0.0)
 
             processor_state = updated
 

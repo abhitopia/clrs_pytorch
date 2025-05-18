@@ -156,7 +156,9 @@ class Encoder(nn.Module):
             data = data.unsqueeze(-1)
 
         if self.location == Location.NODE and self.type_ in [Type.POINTER, Type.PERMUTATION_POINTER]:
-            encoding = self.encoders[0](data) # [B, N, H]
+            encoding = self.encoders[0](data) # [B, N, N, H]
+            if num_nodes is not None:
+                encoding = encoding.masked_fill(~expand(batch_mask(num_nodes, data.size(1), 2), encoding), 0.0)
             edge_fts += encoding
         elif self.location == Location.EDGE:
             encoding = self.encoders[0](data) 

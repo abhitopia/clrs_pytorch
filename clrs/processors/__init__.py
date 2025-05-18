@@ -1,6 +1,6 @@
 from .base import Processor, GraphFeatures
 from .gat import GAT, GATFull, GATv2, GATv2Full
-from .pgn import PGN, PGNMask, DeepSets, MPNN
+from .pgn import PGN, PGNMask, DeepSets, MPNN, Reduction
 from enum import Enum
 from typing import Optional
 
@@ -28,6 +28,7 @@ class ProcessorEnum(str, Enum):
                  use_ln: bool = True, 
                  nb_heads: Optional[int] = 1, 
                  triplet_fts_size: Optional[int] = 8,
+                 reduction: Reduction = Reduction.MAX,
                  mp_steps: int = 1) -> Processor:
         common_kwargs = {
             "node_feat_size": hidden_dim,
@@ -54,66 +55,79 @@ class ProcessorEnum(str, Enum):
         elif self == ProcessorEnum.deepsets:
             return DeepSets(**common_kwargs,
                             **pgn_common_kwargs,
+                            reduction=reduction,
                             use_triplets=False,
                             gated=False)
         elif self == ProcessorEnum.mpnn:
             return MPNN(**common_kwargs,
                         **pgn_common_kwargs,
+                        reduction=reduction,
                         use_triplets=False,
                         gated=False)
         elif self == ProcessorEnum.pgn:
             return PGN(**common_kwargs,
                        **pgn_common_kwargs,
+                       reduction=reduction,
                        use_triplets=False,
                        gated=False)
         elif self == ProcessorEnum.pgn_mask:
             return PGNMask(**common_kwargs,
                             **pgn_common_kwargs,
+                            reduction=reduction,
                             use_triplets=False,
                             gated=False)
         elif self == ProcessorEnum.triplet_mpnn:
             return MPNN(**common_kwargs,
                         **pgn_common_kwargs,
+                        reduction=reduction,
                         use_triplets=True,
                         gated=False)
         elif self == ProcessorEnum.triplet_pgn:
             return PGN(**common_kwargs,
                        **pgn_common_kwargs,
+                       reduction=reduction,
                        use_triplets=True,
                        gated=False)
         elif self == ProcessorEnum.triplet_pgn_mask:
             return PGNMask(**common_kwargs,
                             **pgn_common_kwargs,
+                            reduction=reduction,
                             use_triplets=True,
                             gated=False)
         elif self == ProcessorEnum.gpgn:
             return PGN(**common_kwargs,
                        **pgn_common_kwargs,
+                       reduction=reduction,
                        use_triplets=False,
                        gated=True)
         elif self == ProcessorEnum.gpgn_mask:
             return PGNMask(**common_kwargs,
                             **pgn_common_kwargs,
+                            reduction=reduction,
                             use_triplets=False,
                             gated=True)
         elif self == ProcessorEnum.gmpnn:
             return MPNN(**common_kwargs,
                         **pgn_common_kwargs,
+                        reduction=reduction,
                         use_triplets=False,
                         gated=True)
         elif self == ProcessorEnum.triplet_gpgn:
             return PGN(**common_kwargs,
                        **pgn_common_kwargs,
+                       reduction=reduction,
                        use_triplets=True,
                        gated=True)
         elif self == ProcessorEnum.triplet_gpgn_mask:
             return PGNMask(**common_kwargs,
                            **pgn_common_kwargs,
+                           reduction=reduction,
                            use_triplets=True,
                            gated=True)
         elif self == ProcessorEnum.triplet_gmpnn:
             return MPNN(**common_kwargs,
                         **pgn_common_kwargs,
+                        reduction=reduction,
                         use_triplets=True,
                         gated=True)
         else:

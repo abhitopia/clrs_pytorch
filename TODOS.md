@@ -11,13 +11,12 @@
 - [x] Pass the num nodes to the model
 - [x] Test all pgn models
 - [x] Test all gat models
-- [ ] Make static batches work with loss
-- [ ] Make static batches work with lstm
+- [x] Make static batches work with loss
+- [x] Make static batches work with lstm
 
 
 # Next make the evaluation and loss work
-- [ ] Make evaluations mean sin batch dim
-- [ ] Check if step mask is correct for evaluation
+- [x] Check if step mask is correct for evaluation
 
 - [ ] Add device to get mask
 - [ ] Make decoder work on static batches

@@ -248,13 +248,6 @@ def test_model_output(model: Model, b1: Feature, b2: Feature):
                 raise e
 
 
-
-    # for key in p1.keys():
-    #     assert (p1[key] == p2[key]).all()
-    #     assert (l1[key] == l2[key]).all()
-    #     assert (o1[key] == o2[key]).all()
-
-
 def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_small: int, size_large: int):
     torch.set_printoptions(profile="full", precision=16)
     clrs.utils.set_bias_value(1.0)
@@ -264,7 +257,7 @@ def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_s
     decode_hints = True
     use_lstm = False
     hint_reconst_mode = ReconstMode.SOFT
-    hint_teacher_forcing = 0.0
+    hint_teacher_forcing = 1.0
     dropout = 0.0
     reduction = Reduction.MAX
 
@@ -284,7 +277,7 @@ def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_s
     model.eval()  # This is important to prevent noise from being injected in log_sinkhorn
     spec = specs[algorithm]
 
-    # test_model_step(model, b1[algorithm], b2[algorithm])
+    test_model_step(model, b1[algorithm], b2[algorithm])
     test_model_output(model, b1[algorithm], b2[algorithm])
 
     clrs.utils.set_bias_value(0.0)

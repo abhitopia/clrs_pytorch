@@ -1073,8 +1073,18 @@ class Model(torch.nn.Module):
                                                             dropout=dropout))
             
     def compile(self):
+        # Enable dynamic shape tracing and handling
+        torch._dynamo.config.capture_dynamic_output_shape_ops = True
+        # torch._dynamo.config.assume_static_by_default = False
+        # torch._dynamo.config.automatic_dynamic_shapes = True
         for algo_name, model in self.models.items():
-            self.models[algo_name] = torch.compile(model, fullgraph=True, mode="reduce-overhead", backend="inductor")
+            self.models[algo_name] = torch.compile(
+                model,
+                fullgraph=True,
+                # mode="reduce-overhead",
+                dynamic=True,
+                backend="aot_eager"
+            )
         
     def forward(self, features: Dict[AlgorithmEnum, Feature]) -> Tuple[Dict[AlgorithmEnum, Trajectory], Dict[AlgorithmEnum, Trajectory]]:
         predictions, losses, evaluations = {}, {}, {}
@@ -1082,194 +1092,3 @@ class Model(torch.nn.Module):
             predictions[algo], losses[algo], evaluations[algo] = self.models[algo](feature)
         return predictions, losses, evaluations
 
-
-if __name__ == "__main__":
-    import pytorch_lightning as pl
-    pl.seed_everything(42)
-    torch.use_deterministic_algorithms(True)
-    from .dataset import get_dataset
-    from torch.utils.data import DataLoader
-    from .processors import ProcessorEnum
-
-    algo = 'matrix_chain_order'
-    algos = [AlgorithmEnum.matrix_chain_order]
-
-    ds1 = get_dataset(algos=algos,
-                      trajectory_sizes=[4],
-                      num_samples=200,
-                      stacked=False,
-                      generate_on_the_fly=False,
-                      static_batch_size=False)
-    ds2 = get_dataset(algos=algos,
-                      trajectory_sizes=[4, 16],
-                      num_samples=200,
-                      stacked=False,
-                      generate_on_the_fly=False,
-                      static_batch_size=True)
-    
-    
-    batch_size = 32
-    dl1 = ds1.get_dataloader(
-        batch_size=batch_size,
-        shuffle=False, 
-        drop_last=False,
-        num_workers=0
-    )
-    dl2 = ds2.get_dataloader(
-        batch_size=batch_size,
-        shuffle=False, 
-        drop_last=False,
-        num_workers=0
-    )
-
-    b1, b2 = next(iter(dl1)), next(iter(dl2))
-    # algo = 'bfs'
-
-    spec = ds1.specs[algo]
-    b1 = b1[algo]
-    b2 = b2[algo]
-    t1, s1, n1 = b1[0], b1[1], b1[2]
-    t2, s2, n2 = b2[0], b2[1], b2[2]
-    i1, h1, o1 = t1[Stage.INPUT], t1[Stage.HINT], t1[Stage.OUTPUT]
-    i2, h2, o2 = t2[Stage.INPUT], t2[Stage.HINT], t2[Stage.OUTPUT]
-
-    from rich import print
-    print(spec)
-
-    hidden_dim = 128
-    encode_hints = True
-    decode_hints = True
-    use_lstm = True
-    hint_reconst_mode = ReconstMode.SOFT
-    hint_teacher_forcing = 0.0
-    dropout = 0.0
-
-
-    process_classes = [p for p in list(ProcessorEnum)]
-
-    import ipdb; ipdb.set_trace()
-    for processor_cls in process_classes:
-        print('Testing', processor_cls.name)
-        processor = processor_cls(hidden_dim=hidden_dim, mp_steps=1)
-        model = Model(specs=ds1.specs,
-                    processor=processor,
-                    hidden_dim=hidden_dim).models[algo]
-        
-        h1_s0 = model.get_hint_at_step(h1, 0)
-        h2_s0 = model.get_hint_at_step(h2, 0)
-
-        g1 = GraphFeatures.empty(batch_size, 4, hidden_dim)
-        g1.adj_mat = g1.adj_mat * batch_mask(n1, 4, 2).type_as(g1.adj_mat)
-        g2 = GraphFeatures.empty(batch_size, 16, hidden_dim)
-        g2.adj_mat = g2.adj_mat * batch_mask(n2, 16, 2).type_as(g2.adj_mat)
-
-        # i1A, i1adj, i1pos, i1s = i1['A'], i1['adj'], i1['pos'], i1['s']
-        # i2A, i2adj, i2pos, i2s = i2['A'], i2['adj'], i2['pos'], i2['s']
-        # h1pi_h, h1reach_h = h1_s0['pi_h'], h1_s0['reach_h']
-        # h2pi_h, h2reach_h = h2_s0['pi_h'], h2_s0['reach_h']
-
-        # model.encoder(i1, h1_s0, n1)
-        # model.encoder(i2, h2_s0, n2)
-        # import ipdb; ipdb.set_trace()
-        # model.encoder.encoders[Stage.INPUT]['A'].encode(i1A, g1)
-        # model.encoder.encoders[Stage.INPUT]['A'].encode(i2A, g2)
-        # model.encoder.encoders[Stage.INPUT]['adj'].encode(i1adj, g1)
-        # model.encoder.encoders[Stage.INPUT]['adj'].encode(i2adj, g2)
-        # model.encoder.encoders[Stage.INPUT]['pos'].encode(i1pos, g1)
-        # model.encoder.encoders[Stage.INPUT]['pos'].encode(i2pos, g2)
-        # model.encoder.encoders[Stage.INPUT]['s'].encode(i1s, g1)
-        # model.encoder.encoders[Stage.INPUT]['s'].encode(i2s, g2)
-        # model.encoder.encoders[Stage.HINT]['pi_h'].encode(h1pi_h, g1)
-        # model.encoder.encoders[Stage.HINT]['pi_h'].encode(h2pi_h, g2)
-        # model.encoder.encoders[Stage.HINT]['reach_h'].encode(h1reach_h, g1)
-        # model.encoder.encoders[Stage.HINT]['reach_h'].encode(h2reach_h, g2)
-
-
-        g1 = model.encoder(i1, h1_s0, None)
-        g2 = model.encoder(i2, h2_s0, n2)
-
-  
-
-        assert (g1.adj_mat == g2.adj_mat[:, :4, :4]).all()
-        assert (g2.adj_mat[:, :4, 4:] == 0).all()
-        assert (g2.adj_mat[:, 4:, :4] == 0).all()
-        assert (g2.adj_mat[:, 4:, 4:] == 0).all()
-        assert (g1.node_fts == g2.node_fts[:, :4, :]).all()
-        assert (g1.node_fts[:, 4:, :] == 0).all()
-        assert (g1.edge_fts == g2.edge_fts[:, :4, :4, :]).all()
-        assert (g1.edge_fts[:, 4:, :4, :] == 0).all()
-        assert (g1.edge_fts[:, :4, 4:, :] == 0).all()
-        assert (g1.edge_fts[:, 4:, 4:, :] == 0).all()
-        assert (g1.graph_fts == g2.graph_fts[:, :]).all()
-
-        # ps1 = torch.zeros((batch_size, 4, hidden_dim))
-        # ps2 = torch.zeros((batch_size, 16, hidden_dim))
-
-        # # import ipdb; ipdb.set_trace()
-        # nps1, nxe1 = model.processor(g1, processor_state=ps1, num_nodes=None)
-        # nps2, nxe2 = model.processor(g2, processor_state=ps2, num_nodes=n2)
-
-        # try:
-        #     assert (nps1[:, :, :] == nps2[:, :4, :]).all()
-        # except Exception as e:
-        #     print("Trying allclose for {}".format(processor_cls.name))
-        #     assert torch.allclose(nps1[:, :, :], nps2[:, :4, :], atol=1e-6, rtol=1e-6)
-            
-        # assert (nps2[:, 4:, :] == 0).all()
- 
-
-        # if nxe1 is None: 
-        #     assert nxe2 is None
-        # else:
-        #     assert (nxe1 == nxe2[:, :4, :4, :]).all()
-        #     # import ipdb; ipdb.set_trace()
-        #     assert (nxe2[:, 4:, :4, :] == 0).all()
-        #     assert (nxe2[:, :4, 4:, :] == 0).all()
-        #     assert (nxe2[:, 4:, 4:, :] == 0).all()
-
-
-        # nfd1 = torch.cat([g1.node_fts, ps1, nps1], dim=-1)
-        # nfd2 = torch.cat([g2.node_fts, ps2, nps2], dim=-1)
-
-        # if nxe1 is not None:
-        #     nxe1 = torch.cat([g1.edge_fts, nxe1], dim=-1)
-        #     nxe2 = torch.cat([g2.edge_fts, nxe2], dim=-1)
-        # else:
-        #     nxe1 = g1.edge_fts
-        #     nxe2 = g2.edge_fts
-        
-        # gd1 = GraphFeatures(adj_mat=g1.adj_mat, node_fts=nfd1, edge_fts=nxe1, graph_fts=g1.graph_fts)
-        # gd2 = GraphFeatures(adj_mat=g2.adj_mat, node_fts=nfd2, edge_fts=nxe2, graph_fts=g2.graph_fts)
-
-        # preds1, raw_preds1 = model.decoder.decoders[Stage.OUTPUT]['s'].decode(gd1, num_nodes=None)
-        # preds2, raw_preds2 = model.decoder.decoders[Stage.OUTPUT]['s'].decode(gd2, num_nodes=n2)
-
-        # # assert (preds2['output']['s'][:, :4, :4, :4] == preds1['output']['s']).all()
-        # assert (raw_preds2[:, :4, :4, :4] - raw_preds1).abs().max() < 1e-6
-        # assert (raw_preds2[:, 4:, :4, :4] == 0.0).all()
-        # assert (raw_preds2[:, :4, 4:, :4] == 0.0).all()
-        # assert (raw_preds2[:, :4, :4, 4:] == 0.0).all()
-        # assert (raw_preds2[:, 4:, 4:, :4] == 0.0).all()
-        # assert (raw_preds2[:, 4:, :4, 4:] == 0.0).all()
-        # assert (raw_preds2[:, :4, 4:, 4:] == 0.0).all()
-        # assert (raw_preds2[:, 4:, 4:, 4:] == 0.0).all()
-        
-        # # pd1, rd1 = model.decoder(gd1)
-        # # pd2, rd2 = model.decoder(gd2)
-
-        # # assert (pd2['output']['s'][:, :4, :4, :4] == pd1['output']['s']).all()        
-        # doSomething = 1
-
-
-    # import ipdb; ipdb.set_trace()
-
-    
-    # p1, l1, e1 = model(b1)
-    # print("///"*100)
-    # p2, l2, e2 = model(b2)
-    # import ipdb; ipdb.set_trace()
-    # for batch in dl1:
-    #     predictions, losses, evaluations  = model(batch)
-    #     # evaluations = model.evaluate(predictions, batch)
-    #     import pdb; pdb.set_trace()
-    #     # print(batch)

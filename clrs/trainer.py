@@ -12,7 +12,7 @@ from .trainer_utils import CustomRichProgressBar, normalize_state_dict, ModelChe
 from .specs import CLRS30Algorithms, AlgorithmEnum, Spec
 from .processors import ProcessorEnum
 from .model import Model, ReconstMode
-from .dataset import get_dataset, get_dataloader
+from .dataset import get_dataset
 
 class Split(str, Enum):
     TRAIN = "train"
@@ -101,8 +101,7 @@ class TrainerConfig:
         
         self._specs = ds.specs if split == Split.TRAIN else self._specs
         
-        return get_dataloader(ds, 
-                              batch_size=self.batch_size, 
+        return ds.get_dataloader(batch_size=self.batch_size, 
                               shuffle=True if split == Split.TRAIN else False,
                               drop_last=True, # Avoid extra compilation 
                               num_workers=num_workers)
@@ -178,18 +177,11 @@ class TrainingModel(pl.LightningModule):
         if self.model is None:
             self.model = self.config.get_model()
         if self.compile:
-
-            # torch._dynamo.config.dynamic_shapes = True
-            torch._dynamo.config.recompile_limit = 256
+            # Enable dynamic shape tracing and handling
+            # torch._dynamo.config.capture_dynamic_output_shape_ops = True
+            # torch._dynamo.config.recompile_limit = 256
+            
             print("Compiling model using torch.compile...")
-            # self.model = torch.compile(
-            #     self.model,
-            #     fullgraph=True,
-            #     mode="reduce-overhead", 
-            #     # dynamic=True,
-            #     # mode="max-autotune",
-            #     backend="inductor"
-            # )
             self.model.compile()
         else:
             print("Model compilation disabled; skipping torch.compile.")
@@ -237,8 +229,7 @@ class TrainingModel(pl.LightningModule):
         return total_loss
 
     def training_step(self, batch, batch_idx):
-        predictions, losses = self.model(batch)
-        evaluations = self.model.evaluate(predictions, batch)
+        predictions, losses, evaluations = self.model(batch)
         total_loss = self.log_metrics(evaluations, losses, "train")
         return total_loss
     
@@ -248,13 +239,11 @@ class TrainingModel(pl.LightningModule):
             self.trainer.test(model=self, ckpt_path=None, verbose=True)
 
     def validation_step(self, batch, batch_idx):
-        prediction, losses = self.model(batch)
-        evaluations = self.model.evaluate(prediction, batch)
+        prediction, losses, evaluations = self.model(batch)
         _ = self.log_metrics(evaluations, losses, "val")
 
     def test_step(self, batch, batch_idx):
-        prediction, losses = self.model(batch)
-        evaluations = self.model.evaluate(prediction, batch)
+        prediction, losses, evaluations = self.model(batch)
         _ = self.log_metrics(evaluations, losses, "test")
 
     def configure_optimizers(self):

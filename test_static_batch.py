@@ -8,6 +8,7 @@ from clrs.processors import ProcessorEnum
 from clrs.model import Model, ReconstMode, get_steps_mask
 from clrs.dataset import get_dataset
 from clrs.utils import batch_mask, expand
+import clrs
 import clrs.utils
 
 def get_batches(algorithm: AlgorithmEnum, batch_size: int, size_small: int, size_large: int):
@@ -180,10 +181,33 @@ def test_model_step(model: Model, b1: Feature, b2: Feature):
                     raise e
 
 
-def test_model_output(model: Model, b1: Feature, b2: Feature):
-    p1, l1, e1 = model(b1)
-    p2, l2, e2 = model(b2)
+def compare_values_step(spec, key, v1, v2, n2, NMin, NMax):
+    stage, location, type_, _  = spec[key]
+        
+    try:
+        offset = 1 if type_ == Type.CATEGORICAL else 0
+        prior_dims = 1
+        num_node_dims = v1.ndim - offset - prior_dims
+        if num_node_dims > 0:
+            mask = expand(batch_mask(n2, NMax, num_node_dims), v2, prior_dims=prior_dims-1)
+            assert (v2[~mask] == 0.0).all()
+            slice_tuple = [slice(None, None)]*prior_dims + [slice(None, NMin)] * (num_node_dims) + [slice(None, None)] * (offset)
+            assert (v1 == v2[slice_tuple]).all()
+        else:
+            assert (v1 == v2).all()
+                
+    except Exception as e:
+        print(f"Failed for key: {key} in stage: {stage} for type: {type_} and location: {location}")
+        import ipdb; ipdb.set_trace()
+        raise e
 
+
+def test_model_output(model: Model, b1: Feature, b2: Feature):
+    clrs.model.set_use_num_nodes(False)
+    p1, l1, e1 = model(b1)
+    clrs.model.set_use_num_nodes(True)
+    p1nn, l1nn, e1nn = model(b1)
+    p2, l2, e2 = model(b2)
 
     _, s1, n1 = b1[0], b1[1], b1[2]
     t2, s2, n2 = b2[0], b2[1], b2[2]
@@ -194,30 +218,34 @@ def test_model_output(model: Model, b1: Feature, b2: Feature):
 
     for stage in [Stage.OUTPUT, Stage.HINT]:
         for key in p1[stage].keys():
-            _, location, type_, _  = spec[key]
-            v1 = p1[stage][key]
-            v2 = p2[stage][key]
+            if stage == Stage.OUTPUT:
+                compare_values_step(spec, key, p1[stage][key], p2[stage][key], n2, NMin, NMax)
+            else:
+                h1_key, h2_key = {key: p1[stage][key]}, {key: p2[stage][key]}
+                Smin, Smax = h1_key[key].size(0), h2_key[key].size(0)
+                for step in range(Smax):
+                    v2 = model.get_hint_at_step(h2_key, step)[key]
+                    if step < Smin: # We don't care about the padding steps
+                        v1 = model.get_hint_at_step(h1_key, step)[key]
+                        compare_values_step(spec, key, v1, v2, n2, NMin, NMax)
 
-            if stage == Stage.HINT:
-                sm_1 = get_steps_mask(s1, v1)
-                sm_2 = get_steps_mask(s2, v2)
-                import ipdb; ipdb.set_trace()
-            try:
-                offset = 1 if type_ == Type.CATEGORICAL else 0
-                prior_dims = 2 if stage == Stage.HINT else 1
-                num_node_dims = v1.ndim - offset - prior_dims
-                if num_node_dims > 0:
-                    mask = expand(batch_mask(n2, NMax, num_node_dims), v2, prior_dims=prior_dims-1)
-                    assert (v2[~mask] == 0.0).all()
-                    slice_tuple = [slice(None, None)]*prior_dims + [slice(None, NMin)] * (num_node_dims) + [slice(None, None)] * (offset)
-                    assert (v1 == v2[slice_tuple]).all()
-                else:
-                    assert (v1 == v2).all()
-                
-            except Exception as e:
-                print(f"Failed for key: {key} in stage: {stage} for type: {type_} and location: {location}")
-                import ipdb; ipdb.set_trace()
-                raise e
+
+        try:
+            if key == 'pred_mask' and stage == Stage.OUTPUT and 'pred' in spec and  spec['pred'][2] == Type.PERMUTATION_POINTER:
+                # Skipping mask_1 for permutation pointer
+                continue
+            assert (e1[stage][key] == e1nn[stage][key]).all()
+            assert (e1[stage][key] == e2[stage][key]).all()
+        except Exception as e:
+            print(f"Failed evaluation for key: {key} in stage: {stage}")
+            import ipdb; ipdb.set_trace()
+            raise e
+
+
+
+
+    
+            
 
 
 

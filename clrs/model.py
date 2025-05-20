@@ -8,6 +8,10 @@ from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output
 from .utils import log_sinkhorn, Linear, batch_mask, expand
 from .processors import GraphFeatures, Processor
 
+_USE_NUM_NODES_FOR_LOSS_AND_EVAL = True  # This is just used for testing. Keep it to True for all practical purposes.
+def set_use_num_nodes(use_num_nodes: bool):
+    global _USE_NUM_NODES_FOR_LOSS_AND_EVAL
+    _USE_NUM_NODES_FOR_LOSS_AND_EVAL = use_num_nodes
 
 
 # Define LSTMState NamedTuple
@@ -486,7 +490,7 @@ class Decoder(nn.Module):
                 add_noise=False)
             data = torch.exp(data)
             if hard:
-                data = F.one_hot(data.argmax(dim=-1), data.shape[-1])
+                data = F.one_hot(data.argmax(dim=-1), data.shape[-1]).type_as(data)
         else:
             raise ValueError("Invalid type")
         
@@ -515,12 +519,20 @@ class Evaluator(nn.Module):
         self.stage = stage
         self.evaluations = nn.ModuleDict()
 
-    def eval_mask_one(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None) -> Tensor:
+    def eval_mask_one(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
+
         # turn one-hot vectors into integer class labels
         pred_labels = prediction.argmax(dim=-1)    # shape (...,)
         truth_labels = target.argmax(dim=-1)  # shape (...,)
         # build mask of entries we care about
-        valid = truth_labels != OutputClass.MASKED  # shape (...,), boolean
+        valid = (target != OutputClass.MASKED).all(dim=-1)   # boolean tensor (...)
+
+        if num_nodes is not None:
+            if self.type_ == Type.CATEGORICAL:
+                mask = self.get_node_mask(num_nodes, prediction).all(-1)
+            else:
+                mask = self.get_node_mask(num_nodes, valid)
+            valid = valid * (mask.type_as(valid))
 
         if self.stage == Stage.HINT:
             assert steps is not None, "Steps must be provided for hint stage"
@@ -528,11 +540,15 @@ class Evaluator(nn.Module):
             valid = valid * steps_mask
 
         # compute accuracy only where valid
-        return (pred_labels[valid] == truth_labels[valid]).float().mean()
+        return (pred_labels[valid] == truth_labels[valid]).type_as(prediction).mean()
     
-    def eval_mask(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None) -> Tensor:
+    def eval_mask(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
         # 1) Build float mask of "valid" positions
-        valid = (target != OutputClass.MASKED).float()
+        valid = (target != OutputClass.MASKED).type_as(prediction)
+
+        if num_nodes is not None:
+            mask = self.get_node_mask(num_nodes, prediction)
+            valid = valid * (mask.type_as(valid))
 
         if self.stage == Stage.HINT:
             assert steps is not None, "Steps must be provided for hint stage"
@@ -563,26 +579,49 @@ class Evaluator(nn.Module):
                         torch.zeros_like(denom))
 
         return f1
-        
-    def forward(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None) -> Tensor:
-        assert prediction.shape == target.shape, "Prediction and target must have the same shape"
+    
 
+    def get_node_mask(self, num_nodes: Tensor, prediction: Tensor) -> Tensor:
+        offset = 1 if self.type_ == Type.CATEGORICAL else 0
+        prior_dims = 1 if self.stage == Stage.OUTPUT else 2  # 2 for hint
+        num_node_dims = prediction.ndim - offset - prior_dims
+        if num_node_dims > 0:
+            return expand(batch_mask(num_nodes, prediction.shape[prior_dims], num_node_dims), prediction, prior_dims=prior_dims-1)
+        else:
+            return torch.ones_like(prediction, device=prediction.device).bool()
+    
+    def eval_pointer(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
+        if num_nodes is not None:
+            mask = self.get_node_mask(num_nodes, prediction)
+        else:
+            mask = torch.ones_like(prediction, device=prediction.device).bool()
+        if self.stage == Stage.HINT:
+            steps_mask = get_steps_mask(steps, prediction)
+            mask = mask & steps_mask
+        return (prediction[mask] == target[mask]).type_as(prediction).mean()
+    
+    def eval_scalar(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
+        if num_nodes is not None:
+            mask = self.get_node_mask(num_nodes, prediction)
+        else:
+            mask = torch.ones_like(prediction, device=prediction.device).bool()
+
+        if self.stage == Stage.HINT:
+            steps_mask = get_steps_mask(steps, prediction)
+            mask = mask & steps_mask
+        return F.mse_loss(prediction[mask], target[mask])
+        
+        
+    def forward(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
+        assert prediction.shape == target.shape, "Prediction and target must have the same shape"
         if self.type_ in [Type.MASK_ONE, Type.CATEGORICAL]:
-            return self.eval_mask_one(prediction, target, steps)
+            return self.eval_mask_one(prediction, target, steps, num_nodes)
         elif self.type_ == Type.MASK:
-            return self.eval_mask(prediction, target, steps)
+            return self.eval_mask(prediction, target, steps, num_nodes)
         elif self.type_ == Type.SCALAR:
-            if self.stage == Stage.HINT:
-                assert steps is not None, "Steps must be provided for hint stage"
-                steps_mask = get_steps_mask(steps, prediction)    
-                return F.mse_loss(prediction[steps_mask], target[steps_mask])
-            return F.mse_loss(prediction, target)
+            return self.eval_scalar(prediction, target, steps, num_nodes)
         elif self.type_ == Type.POINTER:
-            if self.stage == Stage.HINT:
-                assert steps is not None, "Steps must be provided for hint stage"
-                steps_mask = get_steps_mask(steps, prediction)
-                return (prediction[steps_mask] == target[steps_mask]).float().mean()
-            return (prediction == target).float().mean()
+            return self.eval_pointer(prediction, target, steps, num_nodes)
         else:
             import ipdb; ipdb.set_trace()
             raise ValueError("Invalid type")
@@ -642,7 +681,7 @@ class AlgoEvaluator(nn.Module):
             
         return new_trajectory
 
-    def forward(self, prediction: Trajectory, target: Trajectory, steps: Tensor) -> Trajectory:
+    def forward(self, prediction: Trajectory, target: Trajectory, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Trajectory:
         evaluations = {stage: {} for stage in self.evaluators.keys()}
 
         if len(self.skip) > 0:
@@ -650,11 +689,11 @@ class AlgoEvaluator(nn.Module):
             target = self.replace_permutations_with_pointers(target)
         
         for name, evaluator in self.evaluators[Stage.OUTPUT].items():
-            evaluations[Stage.OUTPUT][name] = evaluator(prediction[Stage.OUTPUT][name], target[Stage.OUTPUT][name], steps)
+            evaluations[Stage.OUTPUT][name] = evaluator(prediction[Stage.OUTPUT][name], target[Stage.OUTPUT][name], steps, num_nodes)
 
         if self.decode_hints:
             for name, evaluator in self.evaluators[Stage.HINT].items():
-                evaluations[Stage.HINT][name] = evaluator(prediction[Stage.HINT][name], target[Stage.HINT][name], steps)
+                evaluations[Stage.HINT][name] = evaluator(prediction[Stage.HINT][name], target[Stage.HINT][name], steps, num_nodes)
         return evaluations
 
 class AlgoLoss(nn.Module):
@@ -924,7 +963,7 @@ class AlgoModel(torch.nn.Module):
         # Determine device for new tensors
         device = num_steps.device
         batch_size = num_steps.shape[0]
-        nb_nodes = next(iter(input.values())).shape[1]
+        nb_nodes = input['pos'].shape[1]
         max_steps = next(iter(hints.values())).shape[0]
         
         # Initialize processor_state (h_{t-1} for the overall step recurrence for processor)
@@ -970,8 +1009,12 @@ class AlgoModel(torch.nn.Module):
             Stage.OUTPUT: prediction[Stage.OUTPUT],
             Stage.HINT: self.get_hint_at_step(prediction[Stage.HINT], start_step=1, end_step=max_steps)
         }
+
         loss = self.loss(prediction=raw_prediction, target=target, steps=num_steps)
-        evaluations = self.evaluator(prediction=prediction, target=target, steps=num_steps)
+
+        # print("Using num_nodes:", _USE_NUM_NODES)
+        evaluations = self.evaluator(prediction=prediction, target=target, steps=num_steps, num_nodes=num_nodes if _USE_NUM_NODES_FOR_LOSS_AND_EVAL else None)
+
 
         return prediction, loss, evaluations
 

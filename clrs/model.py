@@ -1077,13 +1077,16 @@ class Model(torch.nn.Module):
         torch._dynamo.config.capture_dynamic_output_shape_ops = True
         # torch._dynamo.config.assume_static_by_default = False
         # torch._dynamo.config.automatic_dynamic_shapes = True
+        # torch._dynamo.config.recompile_limit = 256
+        
         for algo_name, model in self.models.items():
             self.models[algo_name] = torch.compile(
                 model,
                 fullgraph=True,
-                # mode="reduce-overhead",
-                dynamic=True,
-                backend="aot_eager"
+                # mode="max-autotune",  # Changed back to max-autotune for better performance
+                mode="reduce-overhead",
+                # dynamic=True,
+                backend="inductor"  # Changed back to inductor for better performance
             )
         
     def forward(self, features: Dict[AlgorithmEnum, Feature]) -> Tuple[Dict[AlgorithmEnum, Trajectory], Dict[AlgorithmEnum, Trajectory]]:

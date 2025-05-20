@@ -177,10 +177,6 @@ class TrainingModel(pl.LightningModule):
         if self.model is None:
             self.model = self.config.get_model()
         if self.compile:
-            # Enable dynamic shape tracing and handling
-            # torch._dynamo.config.capture_dynamic_output_shape_ops = True
-            # torch._dynamo.config.recompile_limit = 256
-            
             print("Compiling model using torch.compile...")
             self.model.compile()
         else:

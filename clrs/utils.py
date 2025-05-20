@@ -135,8 +135,7 @@ def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool,
 
     if zero_diagonal:
         eye = torch.eye(x.shape[-1], device=x.device, dtype=torch.bool)
-        x = x.masked_fill(eye.unsqueeze(0), float('-inf'))
-
+        x = x.masked_fill(eye.unsqueeze(0), 10e-6)
     if num_nodes is not None:
         edge_mask = expand(batch_mask(num_nodes, x.size(-1), 2), x)
 

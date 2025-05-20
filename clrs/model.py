@@ -66,54 +66,83 @@ class Loss(nn.Module):
         super().__init__()
         self.type_ = type_
         self.stage = stage
+
+    def get_node_mask(self, num_nodes: Tensor, prediction: Tensor) -> Tensor:
+        offset = 1 if self.type_ == Type.CATEGORICAL else 0
+        prior_dims = 1 if self.stage == Stage.OUTPUT else 2  # 2 for hint
+        num_node_dims = prediction.ndim - offset - prior_dims
+        if num_node_dims > 0:
+            return expand(batch_mask(num_nodes, prediction.shape[prior_dims], num_node_dims), prediction, prior_dims=prior_dims-1)
+        else:
+            return torch.ones_like(prediction, device=prediction.device).bool()
     
-    def get_loss(self, pred: Tensor, target: Tensor) -> Tuple[Tensor, Tensor]:
-        mask = None
+    
+    def get_loss(self, pred: Tensor, target: Tensor, num_nodes: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
+        
+        if num_nodes is not None:
+            node_mask = self.get_node_mask(num_nodes, pred).type_as(pred)
+        
         if self.type_ == Type.SCALAR:
             loss = (pred - target)**2
+            mask = torch.ones_like(loss)
+            if num_nodes is not None:
+                mask = mask * node_mask
         elif self.type_ == Type.MASK:
             # stable binary cross entropy or logistic loss
             loss = (F.relu(pred) - pred * target + torch.log1p(torch.exp(-torch.abs(pred))))
             mask = (target != OutputClass.MASKED).type_as(pred)
-        elif self.type_ == Type.MASK_ONE:
-            if self.stage == Stage.OUTPUT:
-                masked_target = target * (target != OutputClass.MASKED).type_as(pred)
-                loss = -torch.sum(masked_target * F.log_softmax(pred, -1), dim=-1, keepdim=True)
-                mask = torch.any(target == OutputClass.POSITIVE, dim=-1).type_as(pred).unsqueeze(-1)
-            else:
-                loss = -torch.sum(target * F.log_softmax(pred, -1), dim=-1, keepdim=True)
-                mask = None
-        elif self.type_ == Type.CATEGORICAL:
-            if self.stage == Stage.OUTPUT:
-                masked_target = target * (target != OutputClass.MASKED).type_as(pred)
-                loss = -torch.sum(masked_target * F.log_softmax(pred, -1), dim=-1, keepdim=True)
-                mask = torch.any(target == OutputClass.POSITIVE, dim=-1).type_as(pred).unsqueeze(-1)
-            else:
-                loss = -torch.sum(target * F.log_softmax(pred, -1), dim=-1)
-                mask = torch.any(target == OutputClass.POSITIVE, dim=-1).type_as(pred)
+            if num_nodes is not None:
+                mask = mask * node_mask
+                loss = torch.nan_to_num(loss, nan=0.0)
+        elif self.type_ in [Type.MASK_ONE, Type.CATEGORICAL]:
+            masked_target = target * (target != OutputClass.MASKED).type_as(pred)
+            if num_nodes is not None:
+                masked_target = masked_target * node_mask
+                target = target * node_mask
+            ce = masked_target * F.log_softmax(pred, -1)
+            if num_nodes is not None:
+                ce = torch.nan_to_num(ce, nan=0.0)
+            loss = -torch.sum(ce, dim=-1, keepdim=True)
+            mask = torch.any(target == OutputClass.POSITIVE, dim=-1, keepdim=True).type_as(pred)
         elif self.type_ == Type.POINTER:
-            loss = -torch.sum(target * F.log_softmax(pred, -1), dim=-1)
+            ce = target * F.log_softmax(pred, -1)
+            if num_nodes is not None:
+                node_mask = self.get_node_mask(num_nodes, pred)
+                # This is necessary to get rid of NaNs
+                ce = ce.masked_fill(~(node_mask.bool()), 0.0)
+                loss = -torch.sum(ce, dim=-1)
+                mask = node_mask.any(-1)
+            else:
+                loss = -torch.sum(ce, dim=-1)
+                mask = torch.ones_like(loss)
+        
         elif self.type_ == Type.PERMUTATION_POINTER:
             # Predictions are NxN logits aiming to represent a doubly stochastic matrix.
             # Compute the cross entropy between doubly stochastic pred and truth_data
-            loss = -torch.sum(target * pred, dim=-1)
+            if num_nodes is not None:
+                pred = pred.masked_fill(~node_mask.bool(), 0.0)
+                target = target * node_mask
 
-        if mask is None:
+            prod = target * pred
+            loss = -torch.sum(prod, dim=-1)
             mask = torch.ones_like(loss)
+
+            if num_nodes is not None:
+                mask = node_mask.any(-1).type_as(loss)
+        else:
+            raise ValueError(f"Invalid type: {self.type_}")
         return loss, mask
     
-    def forward(self, pred: Tensor, target: Tensor, num_steps: Optional[Tensor] = None) -> Tensor:
-        loss, mask = self.get_loss(pred, target)
+    def forward(self, pred: Tensor, target: Tensor, num_steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
+        loss, mask = self.get_loss(pred, target, num_nodes)
         assert loss.shape == mask.shape, f"loss.shape: {loss.shape}, mask.shape: {mask.shape}"
-        dim = tuple(range(1, loss.ndim))
         
         if self.stage == Stage.HINT:
             assert num_steps is not None
             steps_mask = get_steps_mask(num_steps, loss).type_as(mask)
             mask = steps_mask * mask
-            dim = (0,) + tuple(range(2, loss.ndim))
 
-        loss = torch.sum(loss * mask, dim=dim) / (torch.sum(mask, dim=dim) + 1e-8)
+        loss = torch.sum(loss * mask) / torch.sum(mask)
         return loss
 
 class Encoder(nn.Module):
@@ -713,16 +742,16 @@ class AlgoLoss(nn.Module):
             elif stage == Stage.HINT and self.decode_hints:
                 self.loss[Stage.HINT].add_module(name, Loss(type_, stage))
 
-    def forward(self, prediction: Trajectory, target: Trajectory, steps: Tensor) -> Trajectory:
+    def forward(self, prediction: Trajectory, target: Trajectory, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Trajectory:
         losses = {Stage.OUTPUT: {}}
 
         for name, loss in self.loss[Stage.OUTPUT].items():
-            losses[Stage.OUTPUT][name] = loss(prediction[Stage.OUTPUT][name], target[Stage.OUTPUT][name], steps)
+            losses[Stage.OUTPUT][name] = loss(prediction[Stage.OUTPUT][name], target[Stage.OUTPUT][name], steps, num_nodes)
 
         if self.decode_hints:
             losses[Stage.HINT] = {}
             for name, loss in self.loss[Stage.HINT].items():
-                losses[Stage.HINT][name] = loss(prediction[Stage.HINT][name], target[Stage.HINT][name], steps)
+                losses[Stage.HINT][name] = loss(prediction[Stage.HINT][name], target[Stage.HINT][name], steps, num_nodes)
         return losses
 
 class AlgoEncoder(nn.ModuleDict):
@@ -1010,11 +1039,9 @@ class AlgoModel(torch.nn.Module):
             Stage.HINT: self.get_hint_at_step(prediction[Stage.HINT], start_step=1, end_step=max_steps)
         }
 
-        loss = self.loss(prediction=raw_prediction, target=target, steps=num_steps)
-
-        # print("Using num_nodes:", _USE_NUM_NODES)
+        # print("Use num nodes for loss and eval", _USE_NUM_NODES_FOR_LOSS_AND_EVAL)
+        loss = self.loss(prediction=raw_prediction, target=target, steps=num_steps, num_nodes=num_nodes if _USE_NUM_NODES_FOR_LOSS_AND_EVAL else None)
         evaluations = self.evaluator(prediction=prediction, target=target, steps=num_steps, num_nodes=num_nodes if _USE_NUM_NODES_FOR_LOSS_AND_EVAL else None)
-
 
         return prediction, loss, evaluations
 

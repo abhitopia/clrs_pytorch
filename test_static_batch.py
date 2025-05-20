@@ -230,22 +230,22 @@ def test_model_output(model: Model, b1: Feature, b2: Feature):
                         compare_values_step(spec, key, v1, v2, n2, NMin, NMax)
 
 
-        try:
-            if key == 'pred_mask' and stage == Stage.OUTPUT and 'pred' in spec and  spec['pred'][2] == Type.PERMUTATION_POINTER:
-                # Skipping mask_1 for permutation pointer
-                continue
-            assert (e1[stage][key] == e1nn[stage][key]).all()
-            assert (e1[stage][key] == e2[stage][key]).all()
-        except Exception as e:
-            print(f"Failed evaluation for key: {key} in stage: {stage}")
-            import ipdb; ipdb.set_trace()
-            raise e
-
-
-
-
-    
-            
+            try:
+                if key == 'pred_mask' and stage == Stage.OUTPUT and 'pred' in spec and  spec['pred'][2] == Type.PERMUTATION_POINTER:
+                    # Skipping mask_1 for permutation pointer
+                    continue
+                assert (e1[stage][key] == e1nn[stage][key]).all()
+                assert (e1[stage][key] == e2[stage][key]).all()
+                assert (l1[stage][key] == l1nn[stage][key]).all()
+                try:
+                    assert (l1[stage][key] == l2[stage][key]).all()
+                except Exception as e:
+                    print(f"Testing all close for: {key} in stage: {stage} of type: {spec[key][2]} and location: {spec[key][1]}")
+                    assert torch.allclose(l1[stage][key], l2[stage][key])
+            except Exception as e:
+                print(f"Failed evaluation for key: {key} in stage: {stage}")
+                import ipdb; ipdb.set_trace()
+                raise e
 
 
 
@@ -256,6 +256,7 @@ def test_model_output(model: Model, b1: Feature, b2: Feature):
 
 
 def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_small: int, size_large: int):
+    torch.set_printoptions(profile="full", precision=16)
     clrs.utils.set_bias_value(1.0)
     hidden_dim = 128
     batch_size = 32
@@ -300,7 +301,7 @@ if __name__ == "__main__":
     # algorithms = [AlgorithmEnum.bridges]
     # algorithms = [AlgorithmEnum.insertion_sort]
     processors = list(ProcessorEnum)
-    # processors = [ProcessorEnum.pgn_mask]
+    # processors = [ProcessorEnum.gat]
 
     for processor in processors:
         for algorithm in algorithms:

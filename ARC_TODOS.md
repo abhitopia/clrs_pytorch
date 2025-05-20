@@ -1,0 +1,5 @@
+- transnar
+- random positional marking
+- Positional transformer (may be a combination of the two)
+- removing low frequencies (p-ROPE)
+- High precision to counter machine epsilon

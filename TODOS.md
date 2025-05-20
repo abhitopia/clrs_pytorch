@@ -15,6 +15,7 @@
 
 # Next make the evaluation and loss work
 - [ ] Make evaluations mean sin batch dim
+- [ ] Check if step mask is correct for evaluation
 
 - [ ] Add device to get mask
 - [ ] Make decoder work on static batches

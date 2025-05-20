@@ -47,6 +47,9 @@ class ReconstMode(str, Enum):
 
 
 def get_steps_mask(num_steps: NumSteps, data: Tensor) -> Tensor:
+    """
+    This already accounts for one less step in predicted hints.
+    """
     max_steps = data.shape[0]
     batch_size = num_steps.shape[0]
     steps_mask = num_steps > (torch.arange(max_steps, device=num_steps.device).unsqueeze(1) + 1)
@@ -969,6 +972,7 @@ class AlgoModel(torch.nn.Module):
         }
         loss = self.loss(prediction=raw_prediction, target=target, steps=num_steps)
         evaluations = self.evaluator(prediction=prediction, target=target, steps=num_steps)
+
         return prediction, loss, evaluations
 
 

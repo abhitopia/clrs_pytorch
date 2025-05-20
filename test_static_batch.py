@@ -5,7 +5,7 @@ from clrs.processors.base import GraphFeatures
 from clrs.processors.pgn import Reduction
 from clrs.specs import AlgorithmEnum, Feature, Location, Stage, CLRS30Algorithms, Type
 from clrs.processors import ProcessorEnum
-from clrs.model import Model, ReconstMode
+from clrs.model import Model, ReconstMode, get_steps_mask
 from clrs.dataset import get_dataset
 from clrs.utils import batch_mask, expand
 import clrs.utils
@@ -43,7 +43,7 @@ def get_batches(algorithm: AlgorithmEnum, batch_size: int, size_small: int, size
     return b1, b2, ds1.specs
 
 
-def test_matching_outputs(model: Model, b1: Feature, b2: Feature):
+def test_model_step(model: Model, b1: Feature, b2: Feature):
 
     t1, s1, n1 = b1[0], b1[1], b1[2]
     t2, s2, n2 = b2[0], b2[1], b2[2]
@@ -180,6 +180,52 @@ def test_matching_outputs(model: Model, b1: Feature, b2: Feature):
                     raise e
 
 
+def test_model_output(model: Model, b1: Feature, b2: Feature):
+    p1, l1, e1 = model(b1)
+    p2, l2, e2 = model(b2)
+
+
+    _, s1, n1 = b1[0], b1[1], b1[2]
+    t2, s2, n2 = b2[0], b2[1], b2[2]
+    NMin = max(n1).item()
+    NMax = t2['input']['pos'].size(1)
+
+    spec = model.spec
+
+    for stage in [Stage.OUTPUT, Stage.HINT]:
+        for key in p1[stage].keys():
+            _, location, type_, _  = spec[key]
+            v1 = p1[stage][key]
+            v2 = p2[stage][key]
+
+            if stage == Stage.HINT:
+                sm_1 = get_steps_mask(s1, v1)
+                sm_2 = get_steps_mask(s2, v2)
+                import ipdb; ipdb.set_trace()
+            try:
+                offset = 1 if type_ == Type.CATEGORICAL else 0
+                prior_dims = 2 if stage == Stage.HINT else 1
+                num_node_dims = v1.ndim - offset - prior_dims
+                if num_node_dims > 0:
+                    mask = expand(batch_mask(n2, NMax, num_node_dims), v2, prior_dims=prior_dims-1)
+                    assert (v2[~mask] == 0.0).all()
+                    slice_tuple = [slice(None, None)]*prior_dims + [slice(None, NMin)] * (num_node_dims) + [slice(None, None)] * (offset)
+                    assert (v1 == v2[slice_tuple]).all()
+                else:
+                    assert (v1 == v2).all()
+                
+            except Exception as e:
+                print(f"Failed for key: {key} in stage: {stage} for type: {type_} and location: {location}")
+                import ipdb; ipdb.set_trace()
+                raise e
+
+
+
+    # for key in p1.keys():
+    #     assert (p1[key] == p2[key]).all()
+    #     assert (l1[key] == l2[key]).all()
+    #     assert (o1[key] == o2[key]).all()
+
 
 def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_small: int, size_large: int):
     clrs.utils.set_bias_value(1.0)
@@ -188,7 +234,7 @@ def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_s
     encode_hints = True
     decode_hints = True
     use_lstm = False
-    hint_reconst_mode = ReconstMode.HARD
+    hint_reconst_mode = ReconstMode.SOFT
     hint_teacher_forcing = 0.0
     dropout = 0.0
     reduction = Reduction.MAX
@@ -209,7 +255,8 @@ def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_s
     model.eval()  # This is important to prevent noise from being injected in log_sinkhorn
     spec = specs[algorithm]
 
-    test_matching_outputs(model, b1[algorithm], b2[algorithm])
+    # test_model_step(model, b1[algorithm], b2[algorithm])
+    test_model_output(model, b1[algorithm], b2[algorithm])
 
     clrs.utils.set_bias_value(0.0)
 

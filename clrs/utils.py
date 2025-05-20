@@ -40,8 +40,8 @@ def batch_mask(valid_count: Tensor, max_count: int, trailing_dims: int = 2) -> T
     
     return mask
 
-def expand(mask: Tensor, target: Tensor) -> Tensor:
-    unsqueezed_shape = mask.shape + (1,) * (target.ndim - mask.ndim)
+def expand(mask: Tensor, target: Tensor, prior_dims: int = 0) -> Tensor:
+    unsqueezed_shape = (1,) * prior_dims + mask.shape + (1,) * (target.ndim - mask.ndim - prior_dims)
     return mask.view(unsqueezed_shape).expand(target.shape)
 
 

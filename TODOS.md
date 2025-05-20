@@ -11,6 +11,8 @@
 - [x] Pass the num nodes to the model
 - [x] Test all pgn models
 - [x] Test all gat models
+- [ ] Make static batches work with loss
+- [ ] Make static batches work with lstm
 
 
 # Next make the evaluation and loss work

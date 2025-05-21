@@ -75,6 +75,9 @@ class TrainerConfig:
         if isinstance(self.algos, AlgorithmEnum):
             self.algos = [self.algos]
 
+
+        self.algos = sorted(self.algos)
+
         self._specs = None
         if not self.stacked:
             # As per the generalise algorithmic learner paper

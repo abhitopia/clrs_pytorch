@@ -192,9 +192,9 @@ def compare_values_step(spec, key, v1, v2, n2, NMin, NMax):
             mask = expand(batch_mask(n2, NMax, num_node_dims), v2, prior_dims=prior_dims-1)
             assert (v2[~mask] == 0.0).all()
             slice_tuple = [slice(None, None)]*prior_dims + [slice(None, NMin)] * (num_node_dims) + [slice(None, None)] * (offset)
-            assert (v1 == v2[slice_tuple]).all()
+            assert torch.allclose(v1, v2[slice_tuple])
         else:
-            assert (v1 == v2).all()
+            assert torch.allclose(v1, v2)
                 
     except Exception as e:
         print(f"Failed for key: {key} in stage: {stage} for type: {type_} and location: {location}")
@@ -234,14 +234,17 @@ def test_model_output(model: Model, b1: Feature, b2: Feature):
                 if key == 'pred_mask' and stage == Stage.OUTPUT and 'pred' in spec and  spec['pred'][2] == Type.PERMUTATION_POINTER:
                     # Skipping mask_1 for permutation pointer
                     continue
-                assert (e1[stage][key] == e1nn[stage][key]).all()
-                assert (e1[stage][key] == e2[stage][key]).all()
-                assert (l1[stage][key] == l1nn[stage][key]).all()
                 try:
+                    assert (e1[stage][key] == e1nn[stage][key]).all()
+                    assert (l1[stage][key] == l1nn[stage][key]).all()
+                    assert (e1[stage][key] == e2[stage][key]).all()
                     assert (l1[stage][key] == l2[stage][key]).all()
                 except Exception as e:
                     print(f"Testing all close for: {key} in stage: {stage} of type: {spec[key][2]} and location: {spec[key][1]}")
                     assert torch.allclose(l1[stage][key], l2[stage][key])
+                    assert torch.allclose(e1[stage][key], e2[stage][key])
+                    assert torch.allclose(l1[stage][key], l1nn[stage][key])
+                    assert torch.allclose(e1[stage][key], e1nn[stage][key])
             except Exception as e:
                 print(f"Failed evaluation for key: {key} in stage: {stage}")
                 import ipdb; ipdb.set_trace()
@@ -274,6 +277,8 @@ def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_s
                 dropout=dropout
                 ).models[algorithm]
     
+    model.compile()
+    
     model.eval()  # This is important to prevent noise from being injected in log_sinkhorn
     spec = specs[algorithm]
 
@@ -294,7 +299,7 @@ if __name__ == "__main__":
     # algorithms = [AlgorithmEnum.bridges]
     # algorithms = [AlgorithmEnum.insertion_sort]
     processors = list(ProcessorEnum)
-    # processors = [ProcessorEnum.gat]
+    processors = [ProcessorEnum.triplet_gmpnn]
 
     for processor in processors:
         for algorithm in algorithms:

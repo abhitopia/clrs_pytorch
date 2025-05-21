@@ -568,8 +568,16 @@ class Evaluator(nn.Module):
             steps_mask = get_steps_mask(steps, valid).type_as(valid)
             valid = valid * steps_mask
 
-        # compute accuracy only where valid
-        return (pred_labels[valid] == truth_labels[valid]).type_as(prediction).mean()
+        # 5) now compute elementwise equality and cast to float
+        eq = (pred_labels == truth_labels).type_as(prediction)
+
+        # 6) float‐mask and reductions
+        mask_f   = valid.type_as(eq)     # same dtype and device as eq
+        correct  = (eq * mask_f).sum()    # sum of correct predictions
+        total    = mask_f.sum()           # number of valid entries
+
+        # 7) scalar accuracy
+        return correct / total
     
     def eval_mask(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
         # 1) Build float mask of "valid" positions
@@ -627,7 +635,20 @@ class Evaluator(nn.Module):
         if self.stage == Stage.HINT:
             steps_mask = get_steps_mask(steps, prediction)
             mask = mask & steps_mask
-        return (prediction[mask] == target[mask]).type_as(prediction).mean()
+
+        # elementwise equality, as float
+        eq = (prediction == target).type_as(prediction)
+
+        # convert mask to the same dtype, sum will produce scalars
+        mask_f = mask.type_as(prediction)
+
+        # sum over all elements, then divide
+        correct = (eq * mask_f).sum()
+        total   = mask_f.sum()
+
+        # returns a single scalar Tensor
+        return correct / total
+
     
     def eval_scalar(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
         if num_nodes is not None:
@@ -638,7 +659,17 @@ class Evaluator(nn.Module):
         if self.stage == Stage.HINT:
             steps_mask = get_steps_mask(steps, prediction)
             mask = mask & steps_mask
-        return F.mse_loss(prediction[mask], target[mask])
+
+        # 2) Compute per‐element squared error (no reduction)
+        sq_err = (prediction - target).pow(2)
+
+        # 3) Cast mask to the same dtype, so we can multiply
+        mask_f = mask.type_as(sq_err)
+
+        # 4) Sum only the masked errors, then divide by number of masked elements
+        total_err = (sq_err * mask_f).sum()
+        count     = mask_f.sum()
+        return total_err / count
         
         
     def forward(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
@@ -994,7 +1025,7 @@ class AlgoModel(torch.nn.Module):
         batch_size = num_steps.shape[0]
         nb_nodes = input['pos'].shape[1]
         max_steps = next(iter(hints.values())).shape[0]
-        
+        # max_steps = torch.max(num_steps).item()
         # Initialize processor_state (h_{t-1} for the overall step recurrence for processor)
         processor_state = torch.zeros((batch_size, nb_nodes, self.hidden_dim), device=device)
         
@@ -1078,6 +1109,8 @@ class Model(torch.nn.Module):
         # torch._dynamo.config.assume_static_by_default = False
         # torch._dynamo.config.automatic_dynamic_shapes = True
         # torch._dynamo.config.recompile_limit = 256
+        # How many total recompiles to tolerate before stopping entirely:
+        # torch._dynamo.config.accumulated_cache_size_limit = 512
         
         for algo_name, model in self.models.items():
             self.models[algo_name] = torch.compile(

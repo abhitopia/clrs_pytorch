@@ -89,7 +89,7 @@ class TrainerConfig:
 
         ds = get_dataset(self.algos, 
                          split=split.value,
-                         sizes=None,
+                         sizes=self.sizes,
                          static_batch_size=self.static_batch_size,
                          generate_on_the_fly=self.generate_on_the_fly if split == Split.TRAIN else False,
                          stacked=self.stacked,

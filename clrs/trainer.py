@@ -170,20 +170,37 @@ class TrainingModel(pl.LightningModule):
         super().__init__()
         self.config = config
         self.compile = compile
-        self.model = None
+        # self.model = None
         self.learning_rate = config.learning_rate
         self.save_hyperparameters(config.to_dict(), ignore=["model", "config", "compile"])
         self.examples_seen = defaultdict(int)
         self.steps_done = defaultdict(int)
 
-    def configure_model(self):
-        if self.model is None:
-            self.model = self.config.get_model()
-        if self.compile:
+        self.model = self.config.get_model()
+
+        # runs exactly once, before any train/val/test
+
+        if compile:
             print("Compiling model using torch.compile...")
-            self.model.compile()
+            for name, m in self.model.models.items():
+                self.model.models[name] = torch.compile(
+                                            m,
+                                            fullgraph=True,
+                                            mode="reduce‐overhead",
+                                            backend="inductor",
+                                            # dynamic=True
+                                        )
         else:
             print("Model compilation disabled; skipping torch.compile.")
+
+    # def configure_model(self):
+    #     if self.model is None:
+    #         self.model = self.config.get_model()
+    #     if self.compile:
+    #         print("Compiling model using torch.compile...")
+    #         self.model.compile()
+    #     else:
+    #         print("Model compilation disabled; skipping torch.compile.")
 
     
     def on_load_checkpoint(self, checkpoint):

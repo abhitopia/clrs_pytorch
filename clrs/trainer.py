@@ -186,7 +186,7 @@ class TrainingModel(pl.LightningModule):
                 self.model.models[name] = torch.compile(
                                             m,
                                             fullgraph=True,
-                                            mode="reduce‐overhead",
+                                            mode="reduce-overhead",
                                             backend="inductor",
                                             # dynamic=True
                                         )

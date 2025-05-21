@@ -3,11 +3,12 @@ import copy
 import hashlib
 import inspect
 import numpy as np
-from typing import Callable, Tuple, Union
+from typing import Callable, Optional, Tuple, Union
 from .specs import RAW_SPECS, HAS_STATIC_HINT, Feature, Spec, CLRS30Algorithms, AlgorithmEnum
 from .probing import ProbesDict
 from .sampler import SAMPLER_REGISTRY
 from . import algorithms
+ 
 
 
 class Algorithm(abc.ABC):
@@ -15,6 +16,7 @@ class Algorithm(abc.ABC):
                  randomize_pos: bool=True, 
                  move_predh_to_input: bool=True, 
                  enforce_permutations: bool=True, 
+                 max_steps: Optional[int] = None,
                  **sampler_kwargs):
         assert name in CLRS30Algorithms, f"Algorithm {name} not in {CLRS30Algorithms}"
         self._name = name
@@ -24,7 +26,7 @@ class Algorithm(abc.ABC):
         self._move_predh_to_input = move_predh_to_input
         self._enforce_permutations = enforce_permutations
         self._spec = None
-
+        self._max_steps = max_steps
         self._rng = np.random.RandomState(seed)
         self._sampler = SAMPLER_REGISTRY[self.name]
         self._sampler_kwargs = self.clean_sampler_kwargs(sampler_kwargs)
@@ -87,6 +89,10 @@ class Algorithm(abc.ABC):
             enforce_permutations=self._enforce_permutations,
             rng=self._rng
         )
+
+        num_steps = feature[1]
+        if self._max_steps is not None and num_steps > self._max_steps:
+            return self.sample_feature(return_spec)
 
         if return_spec:
             return feature, spec

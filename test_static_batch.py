@@ -14,14 +14,14 @@ import clrs.utils
 
 def get_batches(algorithm: AlgorithmEnum, batch_size: int, size_small: int, size_large: int):
     ds1 = get_dataset(algos=algorithm,
-                      trajectory_sizes=[size_small],
+                      sizes=[size_small],
                       num_samples=200,
                       stacked=False,
                       generate_on_the_fly=False,
                       string_matcher_override=False,
                       static_batch_size=False)
     ds2 = get_dataset(algos=algorithm,
-                      trajectory_sizes=[size_small, size_large],
+                      sizes=[size_small, size_large],
                       num_samples=200,
                       stacked=False,
                       generate_on_the_fly=False,
@@ -302,7 +302,7 @@ def test_gradient_step(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_
 
 
     ds = get_dataset(algos=algorithm,
-                      trajectory_sizes=[size_small, size_large],
+                      sizes=[size_small, size_large],
                       num_samples=200,
                       stacked=False,
                       generate_on_the_fly=False,

@@ -1,4 +1,5 @@
 from collections import defaultdict
+import copy
 import itertools
 from pathlib import Path
 import pickle
@@ -10,6 +11,24 @@ import torch
 from .specs import Stage, AlgorithmEnum, Spec, Type, Feature, Trajectory
 from .algorithm import Algorithm
 from .utils import all_lists_equal
+
+
+
+SIZES_MAX_NUM_STEPS = {
+    AlgorithmEnum.articulation_points: ([4, 7, 9, 10, 11], 50),
+    AlgorithmEnum.bridges: ([4, 7, 9, 10, 12], 50),
+    AlgorithmEnum.bubble_sort: ([4, 7, 8, 9, 10], 50),
+    AlgorithmEnum.dag_shortest_paths: ([4, 7, 11, 13, 16], 40), 
+    AlgorithmEnum.heapsort: ([4, 5, 7, 9, 10], 50), 
+    AlgorithmEnum.jarvis_march: ([3, 4, 5, 6, 7], 50),
+    AlgorithmEnum.mst_kruskal: ([4, 7, 11, 13, 16], 50),
+    AlgorithmEnum.quickselect: ([4, 7, 11, 13, 16], 50),
+    AlgorithmEnum.quicksort: ([4, 7, 11, 12, 13], 50),
+    AlgorithmEnum.strongly_connected_components: ([4, 5, 6, 7, 8], 50),
+}
+
+DEFAULT_MAX_NUM_STEPS = 50
+DEFAULT_SIZES = [4, 7, 11, 13, 16]
 
 
 
@@ -175,7 +194,6 @@ class MultiSizeAlgoFeatureDataset(Dataset):
                 cache_dir: Union[str, Path] = None,
                 generate_on_the_fly: bool = False,
                 static_batch_size: bool = True,
-                device: Optional[torch.device] = None,
                 algo_kwargs: Optional[Dict] = None):
         super().__init__()
         
@@ -183,7 +201,6 @@ class MultiSizeAlgoFeatureDataset(Dataset):
             sizes = [sizes]
 
         self.datasets = []
-        self.device = device
         self._num_samples_per_algo = num_samples // len(sizes)
         assert self._num_samples_per_algo > 0, "Number of samples per algorithm must be greater than 0"
         
@@ -444,31 +461,53 @@ class StackedAlgoFeatureDataset(Dataset):
 
 
 def get_dataset(algos: Union[AlgorithmEnum, List[AlgorithmEnum]],
-                num_samples: int = 1000,
-                trajectory_sizes: Union[int, List[int]] = [4, 7, 11, 13, 16],
+                split: str = "train",
+                sizes: Optional[Union[int, List[int]]] = None,
                 cache_dir: Optional[Union[str, Path]] = None,
                 generate_on_the_fly: bool = False,
                 static_batch_size: bool = True,
+                max_num_steps: Optional[int] = None,
                 stacked: bool = False,
                 string_matcher_override: bool = True, 
                 **algo_kwargs) -> StackedAlgoFeatureDataset:
     
+    assert split in ["train", "val", "test"], "Split must be one of train, val, test"
+
+    if split == "train":
+        num_samples = 1000
+    elif split == "val":
+        num_samples = 32
+    elif split == "test":
+        num_samples = 32
+    
     if isinstance(algos, AlgorithmEnum):
         algos = [algos]
-    if isinstance(trajectory_sizes, int):
-        trajectory_sizes = [trajectory_sizes]
 
     datasets = []
     for algo in algos:
-        trajectory_sizes_algo = trajectory_sizes
+        algo_sizes = sizes
+        algo_max_num_steps = max_num_steps
+
+        if algo_sizes is None:
+            algo_sizes = SIZES_MAX_NUM_STEPS[algo][0] if algo in SIZES_MAX_NUM_STEPS else DEFAULT_SIZES
+
+        if algo_max_num_steps is None:
+            algo_max_num_steps = SIZES_MAX_NUM_STEPS[algo][1] if algo in SIZES_MAX_NUM_STEPS else DEFAULT_MAX_NUM_STEPS
+
+        if split == "val":
+            algo_sizes = [max(algo_sizes)]
+
         # As per the generalise algorithmic learner paper
         if algo in [AlgorithmEnum.naive_string_matcher, AlgorithmEnum.kmp_matcher] and string_matcher_override:
-            max_length = max(trajectory_sizes)
+            max_length = max(algo_sizes)
             max_length = (max_length * 5) // 4
-            trajectory_sizes_algo = [max_length]*len(trajectory_sizes)
+            algo_sizes = [max_length]*len(algo_sizes)
+
+        algo_kwargs = copy.deepcopy(algo_kwargs)
+        algo_kwargs['max_steps'] = algo_max_num_steps
 
         datasets.append(MultiSizeAlgoFeatureDataset(algo=algo,
-                                            sizes=trajectory_sizes_algo,
+                                            sizes=algo_sizes,
                                             num_samples=num_samples,
                                             cache_dir=cache_dir,
                                             generate_on_the_fly=generate_on_the_fly,
@@ -480,81 +519,18 @@ def get_dataset(algos: Union[AlgorithmEnum, List[AlgorithmEnum]],
         return ConcatAlgoTrajectoryDataset(datasets)
     
 
+
 if __name__ == "__main__":
-    # Original stacked dataset and dataloader (for comparison or other tests)
-    print("Testing Original Stacked Dataloader:")
-    # ds = get_dataset(algos=["bfs"],
-    #                 trajectory_sizes=[4, 16],
-    #                 num_samples=100, # Reduced for faster testing
-    #                 generate_on_the_fly=True,
-    #                 stacked=False,
-    #                 cache_dir=None)
-    
-    # dataloader = get_dataloader(ds, 
-    #                         batch_size=32,
-    #                         shuffle=True, 
-    #                         drop_last=False, 
-    #                         device=torch.device('cpu'), 
-    #                         num_workers=0)
 
-    # ds_algo = AlgoTrajectoryDataset(algo=Algorithms.lcs_length,
-    #                                 trajectory_size=8,
-    #                                 num_samples=100,
-    #                                 static_batch_size=True,
-    #                                 generate_on_the_fly=True,
-    #                                 cache_dir=None)
-    
-    # print(ds_algo.max_hint_steps)
-    # print(ds_algo.num_nodes)
-    # for t in ds_algo:
-    #     import ipdb; ipdb.set_trace()
-    #     doSomething = 1
-    
+    from clrs.specs import CLRS30Algorithms
 
-    # ds = MultiSizeAlgoTrajectoryDataset(algo=Algorithms.lcs_length,
-    #                            trajectory_sizes=[4, 16],
-    #                            num_samples=100,
-    #                            static_batch_size=True,
-    #                            generate_on_the_fly=True,
-    #                            cache_dir=None)
+    dataset = get_dataset(CLRS30Algorithms,
+                          stacked=False,
+                          static_batch_size=True,
+                          split="train")
     
-    # dl = ds.get_dataloader(batch_size=32, shuffle=True, drop_last=False, num_workers=0)
-    
-    # print(len(ds))
-    # # import ipdb; ipdb.set_trace()
-    # for idx, batch in enumerate(dl):
-    #     print(f"Batch {idx}:")
-    #     # import ipdb; ipdb.set_trace()
-    #     doSomething = 1
-    #     # print(f"idx: {idx}")
-    #     pass
+    for multi in dataset.datasets:
+        for ds in multi.datasets:
+            print(ds.name, ds.algorithm._max_steps, ds.algorithm._sampler_kwargs)
+            import ipdb; ipdb.set_trace()
 
-    ds = get_dataset(algos=[AlgorithmEnum.lcs_length, AlgorithmEnum.matrix_chain_order],
-                    trajectory_sizes=[4, 16],
-                    num_samples=100,
-                    generate_on_the_fly=True,
-                    static_batch_size=True,
-                    stacked=True,
-                    cache_dir=None)
-    
-    dl = ds.get_dataloader(batch_size=32, shuffle=False, drop_last=True, num_workers=0)
-    
-    for batch in dl:
-        import ipdb; ipdb.set_trace()
-        doSomething = 1
-        pass
-    
-  
-    
-    # bs = 32
-    # dl = DataLoader(ds, 
-    #                 batch_sampler=RoundRobinBatchSampler(dataset_lengths=ds.subdataset_lens,
-    #                                                     batch_size=bs,
-    #                                                     shuffle=True,
-    #                                                     drop_last=True),
-    #                 collate_fn=ds.collate_fn,
-    #                 num_workers=0)
-    # for batch in dl:
-    #     import ipdb; ipdb.set_trace()
-    #     doSomething  = 1
- 

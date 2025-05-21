@@ -2,7 +2,7 @@
 import os
 import torch
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import typer
 from clrs.specs import AlgorithmEnum, CLRS30Algorithms
 from clrs.trainer import TrainerConfig, train
@@ -24,12 +24,11 @@ app = typer.Typer(
 @app.command("train")
 def main(
     algos: List[AlgorithmEnum] = typer.Option(CLRS30Algorithms, "--algos", "-a", help="Algorithms to train", ),
-    train_sizes: List[int] = typer.Option([4, 7, 11, 13, 16], "--train-sizes", "-s", help="Sizes to train"),
+    sizes: Optional[List[int]] = typer.Option(None, "--sizes", "-s", help="Sizes to train"),
     batch_size: int = typer.Option(32, "--batch-size", "-b", help="Batch size"),
     run_name: str = typer.Option("run_1", "--run-name", "-n", help="Run name"),
     project_name: str = typer.Option("clrs", "--project-name", "-p", help="Project name"),
     ckpt_dir: Path = typer.Option("./checkpoints", "--ckpt-dir", "-c", help="Checkpoint directory"),
-    static_num_hints: bool = typer.Option(False, "--static-num-hints", "--static", help="Use static number of hints", is_flag=True, flag_value=True),
     seed: int = typer.Option(42, "--seed", "-sd", help="Seed"),
     stacked: bool = typer.Option(False, "--stacked", "-S", help="Stacked training", is_flag=True, flag_value=True),
     compile: bool = typer.Option(False, "--compile"),
@@ -40,11 +39,11 @@ def main(
         assert len(algos) > 1, "Stacked training requires at least two algorithms"
         
     config = TrainerConfig(algos=algos, 
+                        sizes=sizes,
                         seed=seed, 
                         stacked=stacked,
                         batch_size=batch_size, 
-                        uniform_hint_steps=static_num_hints)
-    config.train_data["sizes"] = train_sizes
+                        static_batch_size=compile)
 
    
     if torch.cuda.is_available() and compile:

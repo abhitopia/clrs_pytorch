@@ -22,10 +22,11 @@ class Split(str, Enum):
 @dataclass
 class TrainerConfig:
     algos: Union[AlgorithmEnum, List[AlgorithmEnum]] = field(default_factory=lambda: CLRS30Algorithms)
+    sizes: Optional[List[int]] = None
     num_steps: int = 10000
+    static_batch_size: bool = True
     stacked: bool = False                                   # Paper found non-stacked training to be better      
     batch_size: int = 32
-    uniform_hint_steps: bool = False                        # If True, each algorithm will have the same number of hint steps
     seed: int = 42
 
     # Optimizer Settings
@@ -33,21 +34,6 @@ class TrainerConfig:
 
     # Data Settings
     generate_on_the_fly: bool = True
-    train_data: Dict[str, Any] = field(default_factory=lambda: {
-        "num_samples": 1000,
-        "sizes": [4, 7, 11, 13, 16],
-        "seed": 1,
-    })
-    val_data: Dict[str, Any] = field(default_factory=lambda: {
-        "num_samples": 32,          # More samples, because why not! (Paper default is 32)
-        "sizes": [16],
-        "seed": 2,
-    })
-    test_data: Dict[str, Any] = field(default_factory=lambda: {
-        "num_samples": 32,          # More samples, because why not! (Paper default is 32)
-        "sizes": [64],
-        "seed": 3,
-    })
 
     # Training Settings (Paper default values)
     encode_hints: bool = True                                
@@ -93,13 +79,21 @@ class TrainerConfig:
 
 
     def get_dataloader(self, split: Split, num_workers: int = 0):
+
+        if split == Split.TRAIN:
+            seed = self.seed + 1
+        elif split == Split.VAL:
+            seed = self.seed + 2
+        else:
+            seed = self.seed + 3
+
         ds = get_dataset(self.algos, 
-                         num_samples=self.train_data["num_samples"],
-                         trajectory_sizes=self.train_data["sizes"],
+                         split=split.value,
+                         sizes=None,
+                         static_batch_size=self.static_batch_size,
                          generate_on_the_fly=self.generate_on_the_fly if split == Split.TRAIN else False,
-                         uniform_hint_steps_per_algo=self.uniform_hint_steps,
                          stacked=self.stacked,
-                         seed=self.train_data["seed"])
+                         seed=seed)
         
         self._specs = ds.specs if split == Split.TRAIN else self._specs
         

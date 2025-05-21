@@ -169,38 +169,20 @@ class TrainingModel(pl.LightningModule):
         super().__init__()
         self.config = config
         self.compile = compile
-        # self.model = None
+        self.model = None
         self.learning_rate = config.learning_rate
         self.save_hyperparameters(config.to_dict(), ignore=["model", "config", "compile"])
         self.examples_seen = defaultdict(int)
         self.steps_done = defaultdict(int)
 
-        self.model = self.config.get_model()
-
-        # runs exactly once, before any train/val/test
-
-        if compile:
+    def configure_model(self):
+        if self.model is None:
+            self.model = self.config.get_model()
+        if self.compile:
             print("Compiling model using torch.compile...")
-            for name, m in self.model.models.items():
-                print(f"Compiling {name}...")
-                self.model.models[name] = torch.compile(
-                                            m,
-                                            fullgraph=True,
-                                            mode="reduce-overhead",
-                                            backend="inductor",
-                                            # dynamic=True
-                                        )
+            self.model.compile()
         else:
             print("Model compilation disabled; skipping torch.compile.")
-
-    # def configure_model(self):
-    #     if self.model is None:
-    #         self.model = self.config.get_model()
-    #     if self.compile:
-    #         print("Compiling model using torch.compile...")
-    #         self.model.compile()
-    #     else:
-    #         print("Model compilation disabled; skipping torch.compile.")
 
     
     def on_load_checkpoint(self, checkpoint):
@@ -220,8 +202,8 @@ class TrainingModel(pl.LightningModule):
             if phase == "train":
                 self.examples_seen[algo] += batch_size
                 self.steps_done[algo] += 1
-                algo_metrics[f"{algo}/examples_seen"] = self.examples_seen[algo]
-                algo_metrics[f"{algo}/steps_done"] = self.steps_done[algo]
+                # algo_metrics[f"{algo}/examples_seen"] = self.examples_seen[algo]
+                # algo_metrics[f"{algo}/steps_done"] = self.steps_done[algo]
             flat_evals, flat_losses = [], []
             tree_map(lambda x: flat_evals.append(x), evaluations[algo])
             tree_map(lambda x: flat_losses.append(x), losses[algo])

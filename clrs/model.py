@@ -1115,6 +1115,7 @@ class Model(torch.nn.Module):
         # torch._dynamo.config.accumulated_cache_size_limit = 512
         
         for algo_name, model in self.models.items():
+            print(f"Compiling {algo_name}...")
             self.models[algo_name] = torch.compile(
                 model,
                 fullgraph=True,

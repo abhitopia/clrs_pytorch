@@ -249,11 +249,11 @@ class TrainingModel(pl.LightningModule):
         total_loss = self.log_metrics(evaluations, losses, "train")
         return total_loss
     
-    def on_train_batch_end(self, outputs: Any, batch: Any, batch_idx: int):
-        step = self.global_step
-        if step == 0 or step % self.config.test_check_interval == 0:
-            print(f"Starting testing epoch...")
-            self.trainer.test(datamodule=self.datamodule, ckpt_path=None, verbose=True)
+    # def on_train_batch_end(self, outputs: Any, batch: Any, batch_idx: int):
+    #     step = self.global_step
+    #     if step == 0 or step % self.config.test_check_interval == 0:
+    #         print(f"Starting testing epoch...")
+    #         self.trainer.test(datamodule=self.datamodule, ckpt_path=None, verbose=True)
 
     def validation_step(self, batch, batch_idx):
         prediction, losses, evaluations = self.model(batch)

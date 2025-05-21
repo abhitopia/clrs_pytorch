@@ -66,7 +66,6 @@ class TrainerConfig:
 
     # Monitoring Settings
     val_check_interval: int = 500
-    test_check_interval: int = 500 
 
     def to_dict(self):
         return {k: v for k, v in asdict(self).items() if not k.startswith("_")}
@@ -84,7 +83,7 @@ class TrainerConfig:
             # They train num_steps cycles
             self.num_steps = self.num_steps * len(self.algos)
             self.val_check_interval = min(self.val_check_interval * len(self.algos), 1500)
-            self.test_check_interval = self.test_check_interval * len(self.algos)
+            self.test_check_interval = self.val_check_interval * 10
 
     @property
     def specs(self):
@@ -252,8 +251,8 @@ class TrainingModel(pl.LightningModule):
     
     def on_train_batch_end(self, outputs: Any, batch: Any, batch_idx: int):
         step = self.global_step
-        if step > 0 and step % self.config.test_check_interval == 0:
-            self.trainer.test(model=self, ckpt_path=None, verbose=True)
+        if step == 0 or step % self.config.test_check_interval == 0:
+            self.trainer.test(datamodule=self.datamodule, ckpt_path=None, verbose=True)
 
     def validation_step(self, batch, batch_idx):
         prediction, losses, evaluations = self.model(batch)

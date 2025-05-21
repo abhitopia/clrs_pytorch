@@ -169,22 +169,17 @@ class TrainingModel(pl.LightningModule):
         super().__init__()
         self.config = config
         self.compile = compile
-        self.model = None
+        self.model = self.config.get_model()
         self.learning_rate = config.learning_rate
         self.save_hyperparameters(config.to_dict(), ignore=["model", "config", "compile"])
         self.examples_seen = defaultdict(int)
         self.steps_done = defaultdict(int)
-
-    def configure_model(self):
-        if self.model is None:
-            self.model = self.config.get_model()
         if self.compile:
             print("Compiling model using torch.compile...")
             self.model.compile()
         else:
             print("Model compilation disabled; skipping torch.compile.")
 
-    
     def on_load_checkpoint(self, checkpoint):
         if self.model is None:
             self.configure_model()

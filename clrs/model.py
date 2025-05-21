@@ -5,13 +5,15 @@ import torch.nn as nn
 from torch import Tensor
 import torch.nn.functional as F
 from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output, OutputClass, AlgorithmEnum, Feature, NumNodes, NumSteps
-from .utils import log_sinkhorn, Linear, batch_mask, expand
+from .utils import log_sinkhorn, Linear, batch_mask, expand, POS_INF, NEG_INF
 from .processors import GraphFeatures, Processor
 
 _USE_NUM_NODES_FOR_LOSS_AND_EVAL = True  # This is just used for testing. Keep it to True for all practical purposes.
 def set_use_num_nodes(use_num_nodes: bool):
     global _USE_NUM_NODES_FOR_LOSS_AND_EVAL
     _USE_NUM_NODES_FOR_LOSS_AND_EVAL = use_num_nodes
+
+
 
 
 # Define LSTMState NamedTuple
@@ -331,7 +333,7 @@ class Decoder(nn.Module):
             node_mask = edge_mask = None
             node_mask_float = edge_mask_float = None
 
-        fill_value = 0.0 if self.type_  == Type.SCALAR else float("-inf")
+        fill_value = 0.0 if self.type_  == Type.SCALAR else NEG_INF
 
         if self.type_ in [Type.SCALAR, Type.MASK, Type.MASK_ONE]:
             preds = self.decoders[0](graph_features.node_fts).squeeze(-1) # (batch_size, nb_nodes)
@@ -366,7 +368,7 @@ class Decoder(nn.Module):
             if self.inf_bias:
                 if num_nodes is not None:
                     # below operation will be hijacked by the -inf bias so we need to take care of it
-                    preds = preds.masked_fill(~edge_mask, float("inf"))  # For pointer, we use -inf
+                    preds = preds.masked_fill(~edge_mask, POS_INF)  # For pointer, we use -inf
                 per_batch_min = torch.amin(preds, dim=tuple(range(1, preds.dim())),keepdim=True)  # shape: (batch, 1, 1, …)
                 neg_one = torch.tensor(-1.0, device=preds.device, dtype=preds.dtype)
                 # mask preds wherever adj_mat <= 0.5
@@ -409,7 +411,7 @@ class Decoder(nn.Module):
         else:
             node_mask = edge_mask = None
 
-        fill_value = 0.0 if self.type_  == Type.SCALAR else float("-inf")
+        fill_value = 0.0 if self.type_  == Type.SCALAR else NEG_INF
 
         if self.type_ in [Type.SCALAR, Type.MASK, Type.MASK_ONE, Type.CATEGORICAL]:
             if num_nodes is not None:
@@ -432,7 +434,7 @@ class Decoder(nn.Module):
         if self.inf_bias_edge and self.type_ in [Type.MASK, Type.MASK_ONE]:
             # below operation will be hijacked by the -inf bias so we need to take care of it
             if num_nodes is not None:
-                preds_inf = preds.masked_fill(~edge_mask.squeeze(-1), float("inf")) 
+                preds_inf = preds.masked_fill(~edge_mask.squeeze(-1), POS_INF) 
                 per_batch_min = torch.amin(preds_inf, dim=tuple(range(1, preds.dim())), keepdim=True) # [B, 1, 1]
             else:
                 per_batch_min = torch.amin(preds, dim=tuple(range(1, preds.dim())), keepdim=True) # [B, 1, 1]
@@ -451,7 +453,7 @@ class Decoder(nn.Module):
 
         if num_nodes is not None:
             node_mask = batch_mask(num_nodes, graph_features.node_fts.size(1), 1).unsqueeze(-1)
-            node_fts = graph_features.node_fts.masked_fill(~node_mask, float("-inf"))
+            node_fts = graph_features.node_fts.masked_fill(~node_mask, NEG_INF)
         else:
             node_fts = graph_features.node_fts
 

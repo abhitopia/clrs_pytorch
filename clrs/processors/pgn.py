@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import List, Optional
-from ..utils import Linear, batch_mask, expand
+from ..utils import Linear, batch_mask, expand, POS_INF, NEG_INF
 from .base import Processor, GraphFeatures
 from torch import nn
 import torch
@@ -57,7 +57,7 @@ class TripletNN(nn.Module):
         if num_nodes is not None:
             # Create mask for valid nodes and apply it consistently
             triplet_mask = expand(batch_mask(num_nodes, N, 3), triplet_tensor) #  [B, N, N, N, T]                      # Apply mask and ensure consistent numerical behavior regardless of padding
-            masked_triplet = triplet_tensor.masked_fill(~triplet_mask, float("-inf")) # [B, N, N, N, T]
+            masked_triplet = triplet_tensor.masked_fill(~triplet_mask, NEG_INF) # [B, N, N, N, T]
             tri_max, _ = masked_triplet.max(dim=1) # [B, N, N, T]
             edge_mask = batch_mask(num_nodes, N, 2).unsqueeze(-1) # [B, N, N, 1]
             tri_max = tri_max.masked_fill(~edge_mask, 0.0) # [B, N, N, T]

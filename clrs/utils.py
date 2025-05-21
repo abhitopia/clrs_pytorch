@@ -9,6 +9,10 @@ import itertools
 _BIAS_VALUE = 0.0
 
 
+POS_INF = 1e9
+NEG_INF = -1e9
+
+
 def set_bias_value(val):
     global _BIAS_VALUE
     _BIAS_VALUE = val
@@ -135,18 +139,18 @@ def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool,
 
     if zero_diagonal:
         eye = torch.eye(x.shape[-1], device=x.device, dtype=torch.bool)
-        x = x.masked_fill(eye.unsqueeze(0), 10e-6)
+        x = x.masked_fill(eye.unsqueeze(0), NEG_INF)
     if num_nodes is not None:
         edge_mask = expand(batch_mask(num_nodes, x.size(-1), 2), x)
 
     for _ in range(steps):
         x = torch.log_softmax(x, dim=-1)
         if num_nodes is not None:
-            x = x.masked_fill(~edge_mask, float('-inf'))
+            x = x.masked_fill(~edge_mask, NEG_INF)
     
         x = torch.log_softmax(x, dim=-2)
         if num_nodes is not None:
-            x = x.masked_fill(~edge_mask, float('-inf'))
+            x = x.masked_fill(~edge_mask, NEG_INF)
 
     return x
 

@@ -1,11 +1,12 @@
 import torch
+from torch.optim import Adam
 from collections import defaultdict
 from pytorch_lightning import seed_everything
 from clrs.processors.base import GraphFeatures
 from clrs.processors.pgn import Reduction
 from clrs.specs import AlgorithmEnum, Feature, Location, Stage, CLRS30Algorithms, Type
 from clrs.processors import ProcessorEnum
-from clrs.model import Model, ReconstMode, get_steps_mask
+from clrs.model import Model, ReconstMode, get_steps_mask, POS_INF, NEG_INF
 from clrs.dataset import get_dataset
 from clrs.utils import batch_mask, expand
 import clrs
@@ -140,7 +141,7 @@ def test_model_step(model: Model, b1: Feature, b2: Feature):
 
             for key in raw_out1.keys():
                 _, location, type_, _  = spec[key]
-                fill_value = 0.0 if type_ == Type.SCALAR else float("-inf")
+                fill_value = 0.0 if type_ == Type.SCALAR else NEG_INF
                 v1 = raw_out1[key]
                 v2 = raw_out2[key]
                 try:
@@ -277,7 +278,7 @@ def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_s
                 dropout=dropout
                 ).models[algorithm]
     
-    model.compile()
+    # model.compile()
     
     model.eval()  # This is important to prevent noise from being injected in log_sinkhorn
     spec = specs[algorithm]
@@ -288,6 +289,67 @@ def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_s
     clrs.utils.set_bias_value(0.0)
 
 
+def test_gradient_step(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_small: int, size_large: int):
+    hidden_dim = 128
+    batch_size = 32
+    encode_hints = True
+    decode_hints = True
+    use_lstm = False
+    hint_reconst_mode = ReconstMode.SOFT
+    hint_teacher_forcing = 1.0
+    dropout = 0.0
+    reduction = Reduction.MAX
+
+
+    ds = get_dataset(algos=algorithm,
+                      trajectory_sizes=[size_small, size_large],
+                      num_samples=200,
+                      stacked=False,
+                      generate_on_the_fly=False,
+                      string_matcher_override=False,
+                      static_batch_size=True)
+    
+    dl = ds.get_dataloader(
+        batch_size=batch_size,
+        shuffle=True, 
+        drop_last=False,
+        num_workers=0
+    )
+
+    processor = processor(hidden_dim=hidden_dim, mp_steps=1, reduction=reduction)
+    model = Model(specs=ds.specs,
+                processor=processor,
+                hidden_dim=hidden_dim,
+                encode_hints=encode_hints,
+                decode_hints=decode_hints,
+                use_lstm=use_lstm,
+                hint_reconst_mode=hint_reconst_mode,
+                hint_teacher_forcing=hint_teacher_forcing,
+                dropout=dropout
+                ).models[algorithm]
+    
+    optimizer = Adam(model.parameters(), lr=1e-3)
+
+    for idx, batch in enumerate(dl):
+        optimizer.zero_grad()
+        predictions, losses, evaluations = model(batch[algorithm])
+        # import ipdb; ipdb.set_trace()
+        total_loss = 0.0
+        for stage in [Stage.OUTPUT, Stage.HINT]:
+            for key in losses[stage].keys():
+                total_loss += losses[stage][key]
+        # total_loss += losses[Stage.OUTPUT]['pi'] 
+        # total_loss += losses[Stage.HINT]['pi_h']
+        # total_loss += losses[Stage.HINT]['reach_h']
+        print(f"Total loss: {total_loss}")
+        with torch.autograd.detect_anomaly():
+            total_loss.backward()
+            optimizer.step()
+        # import ipdb; ipdb.set_trace()
+        if idx > 3:
+            break
+
+
 
 if __name__ == "__main__":
     seed_everything(42)
@@ -295,7 +357,7 @@ if __name__ == "__main__":
     # algorithms = [AlgorithmEnum.naive_string_matcher]
     # algorithms = [AlgorithmEnum.matrix_chain_order]
     # algorithms = [AlgorithmEnum.lcs_length]
-    # algorithms = [AlgorithmEnum.dfs]
+    # algorithms = [AlgorithmEnum.bfs]
     # algorithms = [AlgorithmEnum.bridges]
     # algorithms = [AlgorithmEnum.insertion_sort]
     processors = list(ProcessorEnum)
@@ -304,7 +366,11 @@ if __name__ == "__main__":
     for processor in processors:
         for algorithm in algorithms:
             print(f"Testing {algorithm.name} with {processor.name}")
-            test_static_batch(algorithm, 
+            # test_static_batch(algorithm, 
+            #                 processor, 
+            #                 size_small=4, 
+            #                 size_large=12)
+            test_gradient_step(algorithm, 
                             processor, 
                             size_small=4, 
                             size_large=12)

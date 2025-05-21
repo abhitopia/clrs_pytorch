@@ -205,6 +205,7 @@ class TrainingModel(pl.LightningModule):
             flat_evals, flat_losses = [], []
             tree_map(lambda x: flat_evals.append(x), evaluations[algo])
             tree_map(lambda x: flat_losses.append(x), losses[algo])
+
             loss_algo = sum(flat_losses)
             total_loss = total_loss + loss_algo
             score_algo = (sum(flat_evals)/len(flat_evals)).detach().cpu().item()

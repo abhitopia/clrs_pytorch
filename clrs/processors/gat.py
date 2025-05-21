@@ -4,7 +4,7 @@ from torch import Tensor
 import torch
 from .base import Processor, GraphFeatures
 import torch.nn.functional as F
-from ..utils import Linear, batch_mask, expand
+from ..utils import Linear, batch_mask, expand, POS_INF, NEG_INF
 
 class GAT(Processor):
     """Graph Attention Network (Velickovic et al., ICLR 2018)."""
@@ -85,7 +85,7 @@ class GAT(Processor):
             att_2n = self.a_2n(node_state).unsqueeze(-1).permute(0, 2, 3, 1) # [B, H, 1, N]
 
             logits = att_1n + att_2n + att_e + att_g # [B, H, N, N]
-            logits = logits.masked_fill(~head_mask, float('-inf'))  # Apply the node mask
+            logits = logits.masked_fill(~head_mask, NEG_INF)  # Apply the node mask
 
             # 2) find rows with *zero* valid entries
             # head_mask.any(dim=-1): [B, 1, N], True if node i has ≥1 valid neighbor
@@ -239,7 +239,7 @@ class GATv2(Processor):
             logits = logits.permute(0, 3, 1, 2) # [B, H, N, N]
 
             # 2) force all padded or non-existent edges to -inf
-            logits = logits.masked_fill(~head_mask, float("-inf"))
+            logits = logits.masked_fill(~head_mask, NEG_INF)
 
             coefs = torch.softmax(logits + bias_mat, dim=-1) * head_mask
             ret = torch.matmul(coefs, values)  # [B, H, N, F]

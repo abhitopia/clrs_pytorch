@@ -217,6 +217,7 @@ class TrainingModel(pl.LightningModule):
         return total_loss
 
     def training_step(self, batch, batch_idx):
+        torch.compiler.cudagraph_mark_step_begin()
         predictions, losses, evaluations = self.model(batch)
         total_loss = self.log_metrics(evaluations, losses, "train")
         return total_loss
@@ -228,10 +229,12 @@ class TrainingModel(pl.LightningModule):
     #         self.trainer.test(datamodule=self.datamodule, ckpt_path=None, verbose=True)
 
     def validation_step(self, batch, batch_idx):
+        torch.compiler.cudagraph_mark_step_begin()
         prediction, losses, evaluations = self.model(batch)
         _ = self.log_metrics(evaluations, losses, "val")
 
     def test_step(self, batch, batch_idx):
+        torch.compiler.cudagraph_mark_step_begin()
         prediction, losses, evaluations = self.model(batch)
         _ = self.log_metrics(evaluations, losses, "test")
 

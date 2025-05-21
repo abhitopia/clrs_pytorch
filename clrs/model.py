@@ -919,28 +919,29 @@ class AlgoModel(torch.nn.Module):
             self.lstm_cell = LSTMCell(self.hidden_dim, self.hidden_dim)
 
     def compile(self):
-        # compilation_kwargs = {
-        #     "fullgraph": True,
-        #     "mode": "reduce-overhead",
-        #     "backend": "inductor"  # Changed back to inductor for better performance
-        # }
+        compilation_kwargs = {
+            "fullgraph": True,
+            "mode": "reduce-overhead",
+            "backend": "inductor"  # Changed back to inductor for better performance
+        }
         # self.dropout = torch.compile(self.dropout, **compilation_kwargs)
         # self.encoder = torch.compile(self.encoder, **compilation_kwargs)
         # self.decoder = torch.compile(self.decoder, **compilation_kwargs)
         # self.processor = torch.compile(self.processor, **compilation_kwargs)
-        # self.loss = torch.compile(self.loss, **compilation_kwargs)
-        # self.evaluator = torch.compile(self.evaluator, **compilation_kwargs)
+        self.loss = torch.compile(self.loss, **compilation_kwargs)
+        self.evaluator = torch.compile(self.evaluator, **compilation_kwargs)
         # if self.use_lstm:
         #     self.lstm_cell = torch.compile(self.lstm_cell, **compilation_kwargs)
-        # self.step = torch.compile(self.step, **compilation_kwargs)
+        self.step = torch.compile(self.step, **compilation_kwargs)
         # self.teacher_force = torch.compile(self.teacher_force, **compilation_kwargs)
         # self.apply_lstm = torch.compile(self.apply_lstm, **compilation_kwargs)
         # self.get_hint_at_step = torch.compile(self.get_hint_at_step, **compilation_kwargs)
         # self.append_step_hints = torch.compile(self.append_step_hints, **compilation_kwargs)
         # self.merge_predicted_output = torch.compile(self.merge_predicted_output, **compilation_kwargs)
 
-        compiled_self = torch.compile(self, fullgraph=False, mode="reduce-overhead", backend="inductor")
-        return compiled_self
+        # compiled_self = torch.compile(self, fullgraph=False, mode="reduce-overhead", backend="inductor")
+        # return compiled_self
+        return self
 
     def apply_lstm(self, processor_state: Tensor, lstm_state: Optional[LSTMState]) -> Tuple[Tensor, Optional[LSTMState]]:
         if self.use_lstm:
@@ -1033,7 +1034,7 @@ class AlgoModel(torch.nn.Module):
                 output[k] = torch.where(keep_prediction, predicted_output[k], output[k])
         return output
     
-    @torch.compiler.disable(recursive=False)
+    @torch.compiler.disable(recursive=True)
     def _loop(self, input, hints, num_nodes, num_steps):
 
         device = num_steps.device

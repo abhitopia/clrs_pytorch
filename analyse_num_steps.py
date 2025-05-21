@@ -1,6 +1,6 @@
 from collections import defaultdict
 from clrs.algorithm import Algorithm, CLRS30Algorithms, AlgorithmEnum
-from clrs.dataset import SIZES_MAX_NUM_STEPS, DEFAULT_SIZES, DEFAULT_MAX_NUM_STEPS
+from clrs.dataset_archive import SIZES_MAX_NUM_STEPS, DEFAULT_SIZES, DEFAULT_MAX_NUM_STEPS
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import seaborn as sns

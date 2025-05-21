@@ -12,7 +12,7 @@ from .trainer_utils import CustomRichProgressBar, normalize_state_dict, ModelChe
 from .specs import CLRS30Algorithms, AlgorithmEnum, Spec
 from .processors import ProcessorEnum
 from .model import Model, ReconstMode
-from .dataset import get_dataset
+from .dataset_archive import get_dataset
 
 class Split(str, Enum):
     TRAIN = "train"

@@ -7,7 +7,7 @@ from clrs.processors.pgn import Reduction
 from clrs.specs import AlgorithmEnum, Feature, Location, Stage, CLRS30Algorithms, Type
 from clrs.processors import ProcessorEnum
 from clrs.model import Model, ReconstMode, get_steps_mask, POS_INF, NEG_INF
-from clrs.dataset import get_dataset
+from clrs.dataset_archive import get_dataset
 from clrs.utils import batch_mask, expand
 import clrs
 import clrs.utils

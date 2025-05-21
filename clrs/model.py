@@ -1118,7 +1118,7 @@ class Model(torch.nn.Module):
             print(f"Compiling {algo_name}...")
             self.models[algo_name] = torch.compile(
                 model,
-                fullgraph=True,
+                fullgraph=False,
                 # mode="max-autotune",  # Changed back to max-autotune for better performance
                 mode="reduce-overhead",
                 # dynamic=True,

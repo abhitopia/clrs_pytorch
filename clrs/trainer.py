@@ -284,6 +284,9 @@ def train(config: TrainerConfig,
     
     pl.seed_everything(config.seed)
 
+    # Dummy call to get the specs
+    config.get_dataloader(Split.TRAIN, num_workers=0)
+
     if torch.cuda.is_available():
         torch.set_float32_matmul_precision('high')
 

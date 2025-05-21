@@ -31,12 +31,17 @@ def main(
     ckpt_dir: Path = typer.Option("./checkpoints", "--ckpt-dir", "-c", help="Checkpoint directory"),
     static_num_hints: bool = typer.Option(False, "--static-num-hints", "--static", help="Use static number of hints", is_flag=True, flag_value=True),
     seed: int = typer.Option(42, "--seed", "-sd", help="Seed"),
+    stacked: bool = typer.Option(False, "--stacked", "-S", help="Stacked training", is_flag=True, flag_value=True),
     compile: bool = typer.Option(False, "--compile"),
     debug: bool = typer.Option(False, "--debug", "-D", help="Debug mode", is_flag=True, flag_value=True),
 ) -> None:
     
+    if stacked:
+        assert len(algos) > 1, "Stacked training requires at least two algorithms"
+        
     config = TrainerConfig(algos=algos, 
                         seed=seed, 
+                        stacked=stacked,
                         batch_size=batch_size, 
                         uniform_hint_steps=static_num_hints)
     config.train_data["sizes"] = train_sizes

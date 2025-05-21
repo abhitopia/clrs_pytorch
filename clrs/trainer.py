@@ -182,6 +182,7 @@ class TrainingModel(pl.LightningModule):
         if compile:
             print("Compiling model using torch.compile...")
             for name, m in self.model.models.items():
+                print(f"Compiling {name}...")
                 self.model.models[name] = torch.compile(
                                             m,
                                             fullgraph=True,

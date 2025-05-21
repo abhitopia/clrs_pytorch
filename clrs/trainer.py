@@ -252,6 +252,7 @@ class TrainingModel(pl.LightningModule):
     def on_train_batch_end(self, outputs: Any, batch: Any, batch_idx: int):
         step = self.global_step
         if step == 0 or step % self.config.test_check_interval == 0:
+            print(f"Starting testing epoch...")
             self.trainer.test(datamodule=self.datamodule, ckpt_path=None, verbose=True)
 
     def validation_step(self, batch, batch_idx):

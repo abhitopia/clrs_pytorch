@@ -1074,7 +1074,7 @@ class Model(torch.nn.Module):
             
     def compile(self):
         # Enable dynamic shape tracing and handling
-        torch._dynamo.config.capture_dynamic_output_shape_ops = True
+        # torch._dynamo.config.capture_dynamic_output_shape_ops = True
         # torch._dynamo.config.assume_static_by_default = False
         # torch._dynamo.config.automatic_dynamic_shapes = True
         # torch._dynamo.config.recompile_limit = 256

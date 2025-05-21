@@ -918,6 +918,29 @@ class AlgoModel(torch.nn.Module):
         if self.use_lstm:
             self.lstm_cell = LSTMCell(self.hidden_dim, self.hidden_dim)
 
+    def compile(self):
+        # compilation_kwargs = {
+        #     "fullgraph": True,
+        #     "mode": "reduce-overhead",
+        #     "backend": "inductor"  # Changed back to inductor for better performance
+        # }
+        # self.dropout = torch.compile(self.dropout, **compilation_kwargs)
+        # self.encoder = torch.compile(self.encoder, **compilation_kwargs)
+        # self.decoder = torch.compile(self.decoder, **compilation_kwargs)
+        # self.processor = torch.compile(self.processor, **compilation_kwargs)
+        # self.loss = torch.compile(self.loss, **compilation_kwargs)
+        # self.evaluator = torch.compile(self.evaluator, **compilation_kwargs)
+        # if self.use_lstm:
+        #     self.lstm_cell = torch.compile(self.lstm_cell, **compilation_kwargs)
+        # self.step = torch.compile(self.step, **compilation_kwargs)
+        # self.teacher_force = torch.compile(self.teacher_force, **compilation_kwargs)
+        # self.apply_lstm = torch.compile(self.apply_lstm, **compilation_kwargs)
+        # self.get_hint_at_step = torch.compile(self.get_hint_at_step, **compilation_kwargs)
+        # self.append_step_hints = torch.compile(self.append_step_hints, **compilation_kwargs)
+        # self.merge_predicted_output = torch.compile(self.merge_predicted_output, **compilation_kwargs)
+
+        compiled_self = torch.compile(self, fullgraph=False, mode="reduce-overhead", backend="inductor")
+        return compiled_self
 
     def apply_lstm(self, processor_state: Tensor, lstm_state: Optional[LSTMState]) -> Tuple[Tensor, Optional[LSTMState]]:
         if self.use_lstm:
@@ -951,11 +974,6 @@ class AlgoModel(torch.nn.Module):
         nxt_processor_state = self.dropout(nxt_processor_state)
         nxt_processor_state, nxt_lstm_state = self.apply_lstm(nxt_processor_state, lstm_state)
 
-        # Assemble features for the decoder
-        # nodes_fts_decoder uses:
-        # - graph_features.node_fts (current encoded inputs for this step)
-        # - processor_state (Processor's h_{t-1} from the previous overall step)
-        # - nxt_processor_state (Processor's h_t from the current step)
         nodes_fts_decoder = torch.cat([graph_features.node_fts, processor_state, nxt_processor_state], dim=-1)
         edge_fts_decoder = graph_features.edge_fts 
         if nxt_edge is not None:
@@ -1014,26 +1032,24 @@ class AlgoModel(torch.nn.Module):
                 keep_prediction = not_done_mask.view(target_mask_shape)
                 output[k] = torch.where(keep_prediction, predicted_output[k], output[k])
         return output
+    
+    @torch.compiler.disable(recursive=False)
+    def _loop(self, input, hints, num_nodes, num_steps):
 
-    def forward(self, feature: Feature) -> Tuple[Trajectory, Trajectory, Trajectory]:
-        trajectory, num_steps, num_nodes = feature[0], feature[1], feature[2]
-        input, hints, output = trajectory[Stage.INPUT], trajectory[Stage.HINT], trajectory[Stage.OUTPUT]
-
-        prediction: Trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
-        raw_prediction: Trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
-
-        # Determine device for new tensors
         device = num_steps.device
         batch_size = num_steps.shape[0]
         nb_nodes = input['pos'].shape[1]
         max_steps = next(iter(hints.values())).shape[0]
         # max_steps = torch.max(num_steps).item()
-        # Initialize processor_state (h_{t-1} for the overall step recurrence for processor)
+
         processor_state = torch.zeros((batch_size, nb_nodes, self.hidden_dim), device=device)
-        
         # Initialize lstm_state (LSTM's own (h,c) from the previous time step)
         lstm_state: Optional[LSTMState] = LSTMState.empty((batch_size * nb_nodes, self.hidden_dim), device=device) if self.use_lstm else None
 
+
+         # Disable the loop as it makes the computational graph too large for torch.compile
+        prediction: Trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
+        raw_prediction: Trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
         for step_idx in range(max_steps):
             orig_hints_at_step = self.get_hint_at_step(hints, step_idx)
             predicted_hints_at_step = self.get_hint_at_step(prediction[Stage.HINT], step_idx-1) 
@@ -1056,7 +1072,19 @@ class AlgoModel(torch.nn.Module):
             raw_prediction[Stage.OUTPUT] = self.merge_predicted_output(output=raw_prediction[Stage.OUTPUT], 
                                                     predicted_output=raw_prediction_step[Stage.OUTPUT], 
                                                     not_done_mask=not_done_mask)
+            
+        return prediction, raw_prediction
 
+
+    def forward(self, feature: Feature) -> Tuple[Trajectory, Trajectory, Trajectory]:
+        trajectory, num_steps, num_nodes = feature[0], feature[1], feature[2]
+        input, hints, output = trajectory[Stage.INPUT], trajectory[Stage.HINT], trajectory[Stage.OUTPUT]
+        max_steps = next(iter(hints.values())).shape[0]
+        prediction, raw_prediction = self._loop(input=input, 
+                                                hints=hints, 
+                                                num_nodes=num_nodes, 
+                                                num_steps=num_steps)
+      
         # first target hint is never predicted
         # predicted hints are shifted by one step, and the first predicted hint is actually second target hint
         target = {
@@ -1106,24 +1134,9 @@ class Model(torch.nn.Module):
                                                             dropout=dropout))
             
     def compile(self):
-        # Enable dynamic shape tracing and handling
-        # torch._dynamo.config.capture_dynamic_output_shape_ops = True
-        # torch._dynamo.config.assume_static_by_default = False
-        # torch._dynamo.config.automatic_dynamic_shapes = True
-        # torch._dynamo.config.recompile_limit = 256
-        # How many total recompiles to tolerate before stopping entirely:
-        # torch._dynamo.config.accumulated_cache_size_limit = 512
-        
         for algo_name, model in self.models.items():
             print(f"Compiling {algo_name}...")
-            self.models[algo_name] = torch.compile(
-                model,
-                fullgraph=False,
-                # mode="max-autotune",  # Changed back to max-autotune for better performance
-                mode="reduce-overhead",
-                # dynamic=True,
-                backend="inductor"  # Changed back to inductor for better performance
-            )
+            self.models[algo_name] = model.compile()
         
     def forward(self, features: Dict[AlgorithmEnum, Feature]) -> Tuple[Dict[AlgorithmEnum, Trajectory], Dict[AlgorithmEnum, Trajectory]]:
         predictions, losses, evaluations = {}, {}, {}

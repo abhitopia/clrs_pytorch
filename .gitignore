@@ -179,3 +179,6 @@ checkpoints/
 .python-version
 
 torch_compile_cache/
+
+
+algorithm_plots/

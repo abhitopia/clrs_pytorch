@@ -65,7 +65,7 @@ class TrainerConfig:
     mp_steps: int = 1
 
     # Monitoring Settings
-    val_check_interval: int = 50
+    val_check_interval: int = 500
     test_check_interval: int = 500 
 
     def to_dict(self):
@@ -80,7 +80,7 @@ class TrainerConfig:
             # As per the generalise algorithmic learner paper
             # They train num_steps cycles
             self.num_steps = self.num_steps * len(self.algos)
-            self.val_check_interval = self.val_check_interval * len(self.algos)
+            self.val_check_interval = min(self.val_check_interval * len(self.algos), 1500)
             self.test_check_interval = self.test_check_interval * len(self.algos)
 
     @property

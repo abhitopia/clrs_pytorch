@@ -13,8 +13,8 @@
 - [x] Test all gat models
 - [x] Make static batches work with loss
 - [x] Make static batches work with lstm
+- [x] Fix examples_seen to use is_first and is_last
 - [ ] Make chunked training work with compiled model
-- [ ] Fix examples_seen to use is_first and is_last
 
 
 # Next make the evaluation and loss work

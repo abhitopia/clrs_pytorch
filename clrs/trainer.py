@@ -145,21 +145,21 @@ class TrainingModel(pl.LightningModule):
         self.learning_rate = config.learning_rate
         self.save_hyperparameters(config.to_dict(), ignore=["model", "config", "compile", "specs"])
         self.examples_seen = defaultdict(int)
-        self.steps_done = defaultdict(int)
+        self.batches_seen = defaultdict(int)
         self.train_model_state = {algo: None for algo in self.model.specs.keys()}
         self.val_model_state = {algo: None for algo in self.model.specs.keys()}
 
-    def log_metrics(self, split: Split, evaluations, losses):
+    def log_metrics(self, split: Split, evaluations, losses, is_first: Dict[Algorithm, bool]):
         total_loss, scores = 0.0, []
         algo_metrics, total_metrics = {}, {}
         batch_size = self.config.batch_size
 
         for algo in evaluations.keys():
             if split == Split.TRAIN:
-                self.examples_seen[algo] += batch_size
-                self.steps_done[algo] += 1
-                # algo_metrics[f"{algo}/examples_seen"] = self.examples_seen[algo]
-                # algo_metrics[f"{algo}/steps_done"] = self.steps_done[algo]
+                self.examples_seen[algo] += batch_size * (1 if is_first[algo] else 0)
+                self.batches_seen[algo] += 1
+                algo_metrics[f"{algo}/examples_seen"] = self.examples_seen[algo]
+                algo_metrics[f"{algo}/batches_seen"] = self.batches_seen[algo]
             flat_evals, flat_losses = [], []
             tree_map(lambda x: flat_evals.append(x), evaluations[algo])
             tree_map(lambda x: flat_losses.append(x), losses[algo])
@@ -208,7 +208,7 @@ class TrainingModel(pl.LightningModule):
         torch.compiler.cudagraph_mark_step_begin()
         (predictions, losses, evaluations), nxt_model_state = self.model(features, model_state)
         self.set_model_state(Split.TRAIN, is_last, nxt_model_state)
-        total_loss = self.log_metrics(Split.TRAIN, evaluations, losses)
+        total_loss = self.log_metrics(Split.TRAIN, evaluations, losses, is_first)
         return total_loss
 
     def validation_step(self, batch: DictFeatureBatch, batch_idx: int):
@@ -217,7 +217,7 @@ class TrainingModel(pl.LightningModule):
         torch.compiler.cudagraph_mark_step_begin()
         (predictions, losses, evaluations), nxt_model_state = self.model(features, model_state)
         self.set_model_state(Split.VAL, is_last, nxt_model_state)
-        _ = self.log_metrics(Split.VAL, evaluations, losses)
+        _ = self.log_metrics(Split.VAL, evaluations, losses, is_first)
 
     def configure_optimizers(self):
         return Adam(self.model.parameters(), 

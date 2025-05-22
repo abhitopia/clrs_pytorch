@@ -70,7 +70,9 @@ class TrainerConfig:
             self.num_train_steps = self.train_batches
 
     def get_dataloader(self, split: Split, num_workers: int = 0):
-        cache_dir = Path(__file__).parent.parent / ".cache"
+        # cache_dir = Path(__file__).parent.parent / ".cache"
+        cache_dir = "/tmp/clrs_cache"
+
         seed = self.seed + (1 if split == Split.VAL else 0)
         num_batches = self.train_batches if split == Split.TRAIN else self.val_batches
         algo_datasets = []

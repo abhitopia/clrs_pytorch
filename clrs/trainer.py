@@ -13,7 +13,7 @@ from .trainer_utils import CustomRichProgressBar, ModelCheckpointWithWandbSync
 from .specs import CLRS30Algorithms, Algorithm, Spec, Feature
 from .processors import Processor
 from .model import Model, ModelState, ReconstMode
-from .dataset import AlgoFeatureDataset, DictFeatureBatch, StackedAlgoFeatureDataset, CyclicAlgoFeatureDataset
+from .dataset import AlgoFeatureDataset, DictFeatureBatch, StackedAlgoFeatureDataset, CyclicAlgoFeatureDataset, load_data_parallel
 
 class Split(str, Enum):
     TRAIN = "train"
@@ -77,6 +77,8 @@ class TrainerConfig:
         num_batches = self.train_batches if split == Split.TRAIN else self.val_batches
         algo_datasets = []
 
+        algo_configs = defaultdict(dict)
+
         for algorithm in self.algorithms:
             algo_sizes = self.sizes
 
@@ -90,6 +92,17 @@ class TrainerConfig:
                 max_length = (max_length * 5) // 4
                 algo_sizes = [max_length]*len(algo_sizes)
 
+            algo_configs[algorithm] = {
+                "sizes": algo_sizes,
+                "chunk_size": self.chunk_size,
+                "batch_size": self.batch_size,
+                "num_batches": num_batches,
+                "seed": seed,
+                "cache_dir": cache_dir,
+                "static_batch_size": self.static_batch_size,
+                "algo_kwargs": {}
+            }
+
             algo_datasets.append(AlgoFeatureDataset(
                                                 algorithm=algorithm,
                                                 sizes=algo_sizes,
@@ -100,6 +113,9 @@ class TrainerConfig:
                                                 cache_dir=cache_dir,
                                                 static_batch_size=self.static_batch_size,
                                                 algo_kwargs={}))    
+            
+        # Load all the data in parallel and cache it to the disk
+        load_data_parallel(algo_configs)
         dataset = StackedAlgoFeatureDataset(algo_datasets) if self.stacked else CyclicAlgoFeatureDataset(algo_datasets)
         return dataset.get_dataloader(num_workers=num_workers)
         

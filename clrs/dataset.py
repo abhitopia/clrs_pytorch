@@ -8,8 +8,9 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from .specs import Algorithm, Feature, Spec, Stage, NumNodes, NumSteps, Type
 from .algorithm import AlgorithmSampler
-from typing import Iterator, List, Dict, Optional, Tuple, Union
+from typing import Iterator, List, Dict, Optional, Tuple, Union, Any
 from pathlib import Path
+from multiprocessing import Pool, cpu_count
 
 
 Batch = Tuple[List[int], int, bool]
@@ -105,7 +106,7 @@ def construct_batches(
     progress_bar: Optional[tqdm] = None) -> Tuple[List[Batch], List[Feature], int, int]:
     """
     Pull features one by one from `sampler` (an iterator over Feature).
-    Group them into buckets by how many chunks they’ll produce.  As soon
+    Group them into buckets by how many chunks they'll produce.  As soon
     as any bucket has ≥ batch_size features, pop a batch, shuffle it, and
     yield all its chunk-level sub-batches.  Stop after yielding num_batches.
     """
@@ -166,6 +167,68 @@ def construct_batches(
         assert len(features) == num_batches * batch_size, "With Chunk Size None, the number of features should be equal to the number of batches times the batch size"
 
     return batches, features, max_num_nodes, max_num_steps
+
+def _load_data_wrapper(kwargs_dict: Dict[str, Any]):
+    """Helper function to unpack keyword arguments for load_data in multiprocessing."""
+    return load_data(**kwargs_dict)
+
+def load_data_parallel(
+    algo_configs: Dict[Algorithm, Dict[str, any]],
+    num_processes: Optional[int] = None,
+    verbose: bool = True
+) -> Dict[Algorithm, Tuple[Spec, List[Batch], List[Feature], int, int]]:
+    """
+    Loads data for multiple algorithms in parallel using multiprocessing.
+
+    Args:
+        algo_configs: A dictionary where keys are Algorithm enums and values are
+                      dictionaries of parameters for the load_data function.
+                      Each inner dictionary can specify:
+                        - num_batches: int (default: 1000)
+                        - sizes: Union[List[int], int] (default: [4, 7, 11, 13, 16])
+                        - seed: int (default: 42)
+                        - batch_size: int (default: 32)
+                        - chunk_size: Optional[int] (default: None)
+                        - algo_kwargs: Dict (default: {})
+                        - cache_dir: Optional[str] (default: None)
+        num_processes: Number of parallel processes to use. Defaults to cpu_count() - 1.
+
+    Returns:
+        A dictionary mapping each algorithm to its loaded data tuple:
+        (Spec, List[Batch], List[Feature], max_num_nodes, max_num_steps).
+    """
+    if num_processes is None:
+        num_processes = max(1, cpu_count() - 1) # Ensure at least 1 process
+
+    tasks = []
+    algorithms_in_order = [] # To maintain order for results reconstruction
+    for alg, config in algo_configs.items():
+        algorithms_in_order.append(alg)
+        # Prepare kwargs for load_data, ensuring all necessary keys are present with defaults
+        task_kwargs = {
+            'algorithm': alg,
+            'num_batches': config.get('num_batches', 1000),
+            'sizes': config.get('sizes', [4, 7, 11, 13, 16]),
+            'seed': config.get('seed', 42),
+            'batch_size': config.get('batch_size', 32),
+            'chunk_size': config.get('chunk_size', None),
+            'algo_kwargs': config.get('algo_kwargs', {}),
+            'cache_dir': config.get('cache_dir', None),
+            'verbose': verbose  
+        }
+        tasks.append(task_kwargs)
+
+    results_list = []
+    if tasks: # Proceed only if there are tasks to run
+        with Pool(processes=min(num_processes, len(tasks))) as pool: # Don't create more processes than tasks
+            results_list = list(pool.imap(_load_data_wrapper, tasks))
+
+    results_dict = {}
+    for i, alg in enumerate(algorithms_in_order):
+        if i < len(results_list): # Check if result exists for the algorithm
+             results_dict[alg] = results_list[i]
+        
+    return results_dict
 
 def load_data(algorithm: Algorithm, 
               num_batches: int = 1000,
@@ -275,11 +338,6 @@ class AlgoFeatureDataset(Dataset):
         self.cache_dir = cache_dir
         self.batches, self.features, self._spec, self.max_num_nodes, self.max_num_steps = None, None, None, None, None
         assert "length" not in self.algo_kwargs, "length must be specified in sizes"
-        self._maybe_load_data(verbose=True) # Just to save the data cache on the disk, and load the spec
-        self.reset()
-
-    def reset(self):
-        self.batches, self.features, self.max_num_nodes, self.max_num_steps = None, None, None, None
 
     @property
     def spec(self):

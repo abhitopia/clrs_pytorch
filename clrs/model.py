@@ -1043,17 +1043,18 @@ class AlgoModel(torch.nn.Module):
                 output[k] = torch.where(keep_prediction, predicted_output[k], output[k])
         return output
     
-    @torch.compiler.disable(recursive=True)
-    def _loop(self, input, hints, num_nodes, num_steps):
 
+    def empty_model_state(self, feature: Feature) -> ModelState:
+        trajectory, num_steps = feature[0], feature[1]
         device = num_steps.device
         batch_size = num_steps.shape[0]
-        nb_nodes = input['pos'].shape[1]
+        nb_nodes = trajectory[Stage.INPUT]['pos'].shape[1]
+        return ModelState(processor_state=torch.zeros((batch_size, nb_nodes, self.hidden_dim), device=device),
+                          lstm_state=LSTMState.empty((batch_size * nb_nodes, self.hidden_dim), device=device) if self.use_lstm else None)
+    
+    @torch.compiler.disable(recursive=True)
+    def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, num_steps: Tensor, model_state: ModelState) -> Tuple[Trajectory, Trajectory, ModelState]:
         max_steps = next(iter(hints.values())).shape[0]
-        # max_steps = torch.max(num_steps).item()
-
-        model_state = ModelState.empty(batch_size, nb_nodes, self.hidden_dim, self.use_lstm, device=device)
-
          # Disable the loop as it makes the computational graph too large for torch.compile
         prediction: Trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
         raw_prediction: Trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
@@ -1079,17 +1080,20 @@ class AlgoModel(torch.nn.Module):
                                                     predicted_output=raw_prediction_step[Stage.OUTPUT], 
                                                     not_done_mask=not_done_mask)
             
-        return prediction, raw_prediction
+        return prediction, raw_prediction, model_state
 
 
-    def forward(self, feature: Feature) -> Tuple[Trajectory, Trajectory, Trajectory]:
+    def forward(self, feature: Feature, model_state: Optional[ModelState] = None) -> Tuple[Trajectory, Trajectory, Trajectory]:
         trajectory, num_steps, num_nodes = feature[0], feature[1], feature[2]
         input, hints, output = trajectory[Stage.INPUT], trajectory[Stage.HINT], trajectory[Stage.OUTPUT]
         max_steps = next(iter(hints.values())).shape[0]
-        prediction, raw_prediction = self._loop(input=input, 
-                                                hints=hints, 
-                                                num_nodes=num_nodes, 
-                                                num_steps=num_steps)
+
+        prev_model_state = self.empty_model_state(feature) if model_state is None else model_state
+        prediction, raw_prediction, nxt_model_state = self._loop(input=input, 
+                                                                hints=hints, 
+                                                                num_nodes=num_nodes, 
+                                                                num_steps=num_steps,
+                                                                model_state=prev_model_state)
       
         # first target hint is never predicted
         # predicted hints are shifted by one step, and the first predicted hint is actually second target hint

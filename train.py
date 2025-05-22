@@ -26,7 +26,7 @@ def main(
     algos: List[Algorithm] = typer.Option(CLRS30Algorithms, "--algos", "-a", help="Algorithms to train", ),
     sizes: List[int] = typer.Option([4, 7, 11, 13, 16], "--sizes", "-s", help="Sizes to train, max value is used for validation"),
     batch_size: int = typer.Option(32, "--batch-size", "-b", help="Batch size"),
-    num_train_batches: int = typer.Option(1000, "--num-train-batches", "-t", help="Number of training batches per algorithm"),
+    num_train_batches: int = typer.Option(10000, "--num-train-batches", "-t", help="Number of training batches per algorithm"),
     num_val_batches: int = typer.Option(10, "--num-val-batches", "-v", help="Number of validation batches per algorithm"),
     chunk_size: int = typer.Option(16, "--chunk-size", "--cs", help="The maximum number of hint steps per batch, <0 means no chunking"),
     run_name: str = typer.Option("run", "--run-name", "-r", help="Run name"),

@@ -1083,7 +1083,7 @@ class AlgoModel(torch.nn.Module):
         return prediction, raw_prediction, model_state
 
 
-    def forward(self, feature: Feature, model_state: Optional[ModelState] = None) -> Tuple[Trajectory, Trajectory, Trajectory]:
+    def forward(self, feature: Feature, model_state: Optional[ModelState] = None) -> Tuple[Tuple[Trajectory, Trajectory, Trajectory], ModelState]:
         trajectory, num_steps, num_nodes = feature[0], feature[1], feature[2]
         input, hints, output = trajectory[Stage.INPUT], trajectory[Stage.HINT], trajectory[Stage.OUTPUT]
         max_steps = next(iter(hints.values())).shape[0]
@@ -1114,8 +1114,12 @@ class AlgoModel(torch.nn.Module):
         loss = self.loss(prediction=raw_prediction, target=target, steps=num_steps, num_nodes=num_nodes if _USE_NUM_NODES_FOR_LOSS_AND_EVAL else None)
         evaluations = self.evaluator(prediction=prediction, target=target, steps=num_steps, num_nodes=num_nodes if _USE_NUM_NODES_FOR_LOSS_AND_EVAL else None)
 
-        return prediction, loss, evaluations
+        return (prediction, loss, evaluations), nxt_model_state
 
+
+DictFeature = Dict[AlgorithmEnum, Feature]
+DictTrajectory = Dict[AlgorithmEnum, Trajectory]
+DictModelState = Dict[AlgorithmEnum, ModelState]
 
 class Model(torch.nn.Module):
     def __init__(self, 
@@ -1147,10 +1151,17 @@ class Model(torch.nn.Module):
         for algo_name, model in self.models.items():
             print(f"Compiling {algo_name}...")
             self.models[algo_name] = model.compile()
+
+
+    def empty_model_state(self, algorithm: AlgorithmEnum, feature: Feature) -> ModelState:
+        return self.models[algorithm].empty_model_state(feature)
         
-    def forward(self, features: Dict[AlgorithmEnum, Feature]) -> Tuple[Dict[AlgorithmEnum, Trajectory], Dict[AlgorithmEnum, Trajectory]]:
-        predictions, losses, evaluations = {}, {}, {}
+    def forward(self, features: DictFeature, 
+                model_state: Optional[DictModelState] = None) -> Tuple[Tuple[DictTrajectory, DictTrajectory, DictModelState], DictModelState]:
+        predictions, losses, evaluations, nxt_model_state = {}, {}, {}, {}
         for algo, feature in features.items():
-            predictions[algo], losses[algo], evaluations[algo] = self.models[algo](feature)
-        return predictions, losses, evaluations
+            if model_state is None or algo not in model_state:
+                model_state = {algo: self.empty_model_state(algo, feature)}
+            (predictions[algo], losses[algo], evaluations[algo]), nxt_model_state[algo] = self.models[algo](feature, model_state[algo])
+        return (predictions, losses, evaluations), nxt_model_state
 

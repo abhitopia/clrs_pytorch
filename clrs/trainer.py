@@ -189,7 +189,7 @@ class TrainingModel(pl.LightningModule):
         features = {algo: feature for algo, (feature, _, _) in batch.items()}
 
         torch.compiler.cudagraph_mark_step_begin()
-        predictions, losses, evaluations = self.model(features)
+        (predictions, losses, evaluations), nxt_model_state = self.model(features)
         total_loss = self.log_metrics(evaluations, losses, "train")
         return total_loss
 
@@ -199,7 +199,7 @@ class TrainingModel(pl.LightningModule):
         is_last = {algo: is_last for algo, (_, _, is_last) in batch.items()}
         features = {algo: feature for algo, (feature, _, _) in batch.items()}
         torch.compiler.cudagraph_mark_step_begin()
-        prediction, losses, evaluations = self.model(features)
+        (predictions, losses, evaluations), nxt_model_state = self.model(features)
         _ = self.log_metrics(evaluations, losses, "val")
 
     def configure_optimizers(self):

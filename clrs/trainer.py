@@ -217,6 +217,11 @@ class TrainingModel(pl.LightningModule):
         self.set_model_state(Split.VAL, is_last, nxt_model_state)
         _ = self.log_metrics(Split.VAL, evaluations, losses, is_first)
 
+    def on_validation_epoch_end(self):
+        # reset the model state for validation, this is to ensure that the model state is not carried over from one epoch to the next
+        self.val_model_state = {algo: None for algo in self.model.specs.keys()}
+
+
     def configure_optimizers(self):
         return Adam(self.model.parameters(), 
                     lr=self.learning_rate, 

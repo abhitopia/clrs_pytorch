@@ -13,9 +13,6 @@ from rich import print
 logging.getLogger("torch._inductor").setLevel(logging.ERROR)
 os.environ['TORCHINDUCTOR_CACHE_DIR'] = str(Path(__file__).parent / "torch_compile_cache")
 
-def cache_dir() -> Path:
-    current_file = Path(__file__)
-    return Path("/tmp/clrs_cache")
 
 app = typer.Typer(
     name="clrs",
@@ -40,7 +37,6 @@ def main(
     stacked: bool = typer.Option(False, "--stacked", "-S", help="Stacked training", is_flag=True, flag_value=True),
     compile: bool = typer.Option(False, "--compile", "-C", help="Compile model", is_flag=True, flag_value=True),
     debug: bool = typer.Option(False, "--debug", "-D", help="Debug mode", is_flag=True, flag_value=True),
-    cache_dir: Path = typer.Option(cache_dir(), "--cache-dir", help="Cache directory"),
 ) -> None:
     
     if stacked:
@@ -54,7 +50,6 @@ def main(
         batch_size=batch_size,
         static_batch_size=not dynamic_batch_size,
         chunk_size=chunk_size,
-        cache_dir=cache_dir,
         train_batches=num_train_batches,
         val_batches=num_val_batches,
     )

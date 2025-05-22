@@ -1,24 +1,21 @@
 from collections import defaultdict
-import hashlib
 import math
-import pickle
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
-from tqdm import tqdm
 from .specs import Algorithm, Feature, Spec, Stage, NumNodes, NumSteps, Type
 from .algorithm import AlgorithmSampler
-from typing import Iterator, List, Dict, Optional, Tuple, Union, Any
-from pathlib import Path
-from multiprocessing import Pool, cpu_count
+from typing import Iterator, List, Dict, Optional, Tuple, Union
 
 
-Batch = Tuple[List[int], int, bool]
 IsLast = bool
 IsFirst = bool
 FeatureBatch = Tuple[Feature, IsFirst, IsLast]
 DictFeatureBatch = Tuple[Dict[Algorithm, FeatureBatch], Dict[Algorithm, IsFirst], Dict[Algorithm, IsLast]]
 
+
+def _collate_fn(batch):
+    return batch
 
 def max_hint_steps(features: List[Feature]) -> NumSteps:
     steps = [feature[1] for feature in features]
@@ -91,220 +88,101 @@ def collate_features(spec: Spec, features: List[Feature], min_hint_steps: int = 
     batch_feature = (batch_trajectory, steps, num_nodes)
     return batch_feature
 
-def combined_algorithm_sampler(samplers: List[AlgorithmSampler]):
+def combined_algorithm_sampler(algorithm: Algorithm, sizes: List[int], seed: int, algo_kwargs: Dict):
+    samplers = []
+    for idx, size in enumerate(sizes):
+        sampler = AlgorithmSampler(algorithm, length=size, seed=seed+idx, **algo_kwargs)
+        samplers.append(sampler)
+
     def _fn():
         while True:
             for sampler in samplers:
                 yield sampler.sample_feature()
     return _fn()
 
-def construct_batches(
+def batch_iterator(
+    spec: Spec,
+    seed: int,
     chunk_size: Optional[int],
     batch_size: int,
+    static_batch_size: bool,
     sampler: Iterator[Feature],
-    num_batches: int, seed: int,
-    progress_bar: Optional[tqdm] = None) -> Tuple[List[Batch], List[Feature], int, int]:
-    """
-    Pull features one by one from `sampler` (an iterator over Feature).
-    Group them into buckets by how many chunks they'll produce.  As soon
-    as any bucket has ≥ batch_size features, pop a batch, shuffle it, and
-    yield all its chunk-level sub-batches.  Stop after yielding num_batches.
-    """
+    warm_up: int = 1000) -> Iterator[FeatureBatch]:
+
     rng = np.random.RandomState(seed)
     buckets = defaultdict(list)
-
     if isinstance(chunk_size, int) and chunk_size <= 0:
         chunk_size = None
 
-    batches = []
-    features = []
     max_num_nodes = 0
     max_num_steps = 0
 
-    for fid, feature in enumerate(sampler):
+    for idx, feature in enumerate(sampler):
         # how many chunks this feature will produce
-        features.append(feature)
-
         _, num_steps, num_nodes = feature
         max_num_nodes = max(max_num_nodes, num_nodes)
         max_num_steps = max(max_num_steps, num_steps)
 
-        if chunk_size is None:
-            n_chunks = math.ceil(num_steps / max_num_steps)
-        else:
-            n_chunks = math.ceil(num_steps / chunk_size)
+        if idx < warm_up:  # Warm up to compute the max_num_nodes and max_num_steps
+            continue
+
+        chunk_size_now = chunk_size if chunk_size is not None else max_num_steps
+        n_chunks = math.ceil(num_steps / chunk_size_now)
 
         # add to bucket
         bucket = buckets[n_chunks]
-        bucket.append(fid)
+        bucket.append(feature)
 
         # if we have enough to form one batch, do it
         if len(bucket) >= batch_size:
             # take the first batch_size features
-            block_feat_ids = bucket[:batch_size]
+            block_feats = bucket[:batch_size]
+
+            # remove the first batch_size features from the bucket, but keep the rest for the next batch
             del bucket[:batch_size]
 
             # shuffle for randomness
-            rng.shuffle(block_feat_ids)
+            rng.shuffle(block_feats)
 
             # emit one Batch per chunk index
             for chunk_idx in range(n_chunks):
+                is_first = (chunk_idx == 0)
                 is_last = (chunk_idx == n_chunks - 1)
-                batches.append((block_feat_ids, chunk_idx, is_last))
-                if progress_bar is not None:
-                    progress_bar.update(1)
 
-        if len(batches) >= num_batches:
-            break
+                # yield block_indices, is_first, is_last
 
+                chunk_features = []
 
-    # Cannot shuffle the batches here or they will lose the order of the batches
-    batches = batches[:num_batches] # Keep only the required number of batches
+                for feature in block_feats:
+                    trajectory, num_steps, num_nodes = feature
+                    start_idx = chunk_idx * chunk_size_now
+                    end_idx = min(start_idx + chunk_size_now, num_steps)
 
-    assert len(batches) == num_batches
+                    inputs = trajectory[Stage.INPUT]
+                    hints = {}
+                    outputs = {}
+                    num_steps = end_idx - start_idx
+                    for key, value in trajectory[Stage.HINT].items():
+                        hints[key] = value[start_idx:end_idx]
 
-    if chunk_size is None:
-        assert len(features) == num_batches * batch_size, "With Chunk Size None, the number of features should be equal to the number of batches times the batch size"
+                    if is_last:
+                        for key, value in trajectory[Stage.OUTPUT].items():
+                            outputs[key] = value
 
-    return batches, features, max_num_nodes, max_num_steps
+                    new_trajectory = {
+                        Stage.INPUT: inputs,
+                        Stage.HINT: hints,
+                        Stage.OUTPUT: outputs,
+                    }
+                    chunk_features.append((new_trajectory, num_steps, num_nodes))
 
-def _load_data_wrapper(kwargs_dict: Dict[str, Any]):
-    """Helper function to unpack keyword arguments for load_data in multiprocessing."""
-    load_data(**kwargs_dict)
+                batch_feature = collate_features(spec, 
+                                        features=chunk_features, 
+                                        min_hint_steps=chunk_size_now if static_batch_size else 0, 
+                                        min_num_nodes=max_num_nodes if static_batch_size else 0)
 
-def load_data_parallel(
-    algo_configs: Dict[Algorithm, Dict[str, any]],
-    num_processes: Optional[int] = None,
-    verbose: bool = True
-) -> None:
-    """
-    Loads data for multiple algorithms in parallel using multiprocessing.
-    This function is used for its side effect of caching data via `load_data`.
-    It does not return the loaded data to save on IPC costs.
+                yield batch_feature, is_first, is_last
 
-    Args:
-        algo_configs: A dictionary where keys are Algorithm enums and values are
-                      dictionaries of parameters for the load_data function.
-                      Each inner dictionary can specify:
-                        - num_batches: int (default: 1000)
-                        - sizes: Union[List[int], int] (default: [4, 7, 11, 13, 16])
-                        - seed: int (default: 42)
-                        - batch_size: int (default: 32)
-                        - chunk_size: Optional[int] (default: None)
-                        - algo_kwargs: Dict (default: {})
-                        - cache_dir: Optional[str] (default: None)
-        num_processes: Number of parallel processes to use. Defaults to cpu_count() - 1.
-        verbose: If True, allows individual `load_data` calls to print progress (if they are configured to do so).
-
-    Returns:
-        None.
-    """
-    if num_processes is None:
-        num_processes = max(1, cpu_count() - 1) # Ensure at least 1 process
-
-    tasks = []
-    for alg, config in algo_configs.items():
-        task_kwargs = {
-            'algorithm': alg,
-            'num_batches': config.get('num_batches', 1000),
-            'sizes': config.get('sizes', [4, 7, 11, 13, 16]),
-            'seed': config.get('seed', 42),
-            'batch_size': config.get('batch_size', 32),
-            'chunk_size': config.get('chunk_size', None),
-            'algo_kwargs': config.get('algo_kwargs', {}),
-            'cache_dir': config.get('cache_dir', None),
-            'verbose': verbose  
-        }
-        tasks.append(task_kwargs)
-
-    if tasks: # Proceed only if there are tasks to run
-        with Pool(processes=min(num_processes, len(tasks))) as pool: # Don't create more processes than tasks
-            # Iterate to ensure all tasks are processed for their side effects (caching)
-            # and to raise any exceptions from worker processes.
-            for _ in pool.imap(_load_data_wrapper, tasks):
-                pass 
-
-    # No results are returned to save IPC overhead.
-    return None
-
-def load_data(algorithm: Algorithm, 
-              num_batches: int = 1000,
-              sizes: Union[List[int], int] = [4, 7, 11, 13, 16], 
-              seed: int = 42, 
-              batch_size: int = 32,
-              chunk_size: Optional[int] = None,
-              algo_kwargs: Dict = {},
-              cache_dir: Optional[str] = None,
-              verbose: bool = True) -> Tuple[Spec, List[Batch], List[Feature], int, int]:
-    
-    if isinstance(sizes, int):
-        sizes = [sizes]
-
-    sizes = sorted(sizes) # Sort to make the hash key deterministics
-    samplers = []
-    hash_keys = [num_batches, batch_size, str(chunk_size), sizes, seed]
-    for idx, size in enumerate(sizes):
-        sampler = AlgorithmSampler(algorithm, length=size, seed=seed+idx, **algo_kwargs)
-        samplers.append(sampler)
-        hash_keys.append(sampler.unique_hash())
-
-    spec = samplers[0].spec
-    hash_key = hashlib.md5(str(hash_keys).encode()).hexdigest()
-
-    progress_bar = tqdm(total=num_batches, desc=f"Loading batches for {algorithm}") if verbose else None
-
-    cache_file = None
-    if cache_dir is not None:
-        cache_file = Path(cache_dir) / algorithm / f"{hash_key}.pkl"
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        if cache_file.exists():
-            if verbose:
-                progress_bar.update(num_batches)
-            return pickle.load(cache_file.open("rb"))
-        
-    combined_sampler = combined_algorithm_sampler(samplers)
-    batches, features, max_num_nodes, max_num_steps = construct_batches(
-                                                                    chunk_size=chunk_size, 
-                                                                    batch_size=batch_size, 
-                                                                    sampler=combined_sampler, 
-                                                                    num_batches=num_batches, 
-                                                                    seed=seed, 
-                                                                    progress_bar=progress_bar)
-    result = spec, batches, features, max_num_nodes, max_num_steps
-
-    if cache_file is not None:
-        pickle.dump(result, cache_file.open("wb"))
-
-    return result
-
-def batch_to_features(batch: Batch, features: List[Feature], chunk_size: int) -> Tuple[List[Feature], IsFirst, IsLast]:
-    chunk_features = []
-    feature_indices, chunk_idx, is_last = batch
-
-    for fid in feature_indices:
-        trajectory, num_steps, num_nodes = features[fid]
-        start_idx = chunk_idx * chunk_size
-        end_idx = min(start_idx + chunk_size, num_steps)
-
-        inputs = trajectory[Stage.INPUT]
-        hints = {}
-        outputs = {}
-        num_steps = end_idx - start_idx
-        for key, value in trajectory[Stage.HINT].items():
-            hints[key] = value[start_idx:end_idx]
-
-        if is_last:
-            for key, value in trajectory[Stage.OUTPUT].items():
-                outputs[key] = value
-
-        new_trajectory = {
-            Stage.INPUT: inputs,
-            Stage.HINT: hints,
-            Stage.OUTPUT: outputs,
-        }
-        chunk_features.append((new_trajectory, num_steps, num_nodes))
-
-    return chunk_features, chunk_idx == 0, is_last
     
 class AlgoFeatureDataset(Dataset):
     def __init__(self, algorithm: Algorithm, 
@@ -314,64 +192,65 @@ class AlgoFeatureDataset(Dataset):
                 batch_size: int = 32,
                 num_batches: int = 1000,
                 static_batch_size: bool = True,
-                cache_dir: Union[str, Path] = None,
                 algo_kwargs: Dict = {}):
         super().__init__()
         assert isinstance(algorithm, Algorithm), "algo must be an AlgorithmEnum"
         if isinstance(sizes, int):
             sizes = [sizes]
 
-        assert all(isinstance(size, int) for size in sizes), "All sizes must be an integer"
-        assert all(size > 0 for size in sizes), "All sizes must be positive"
-
         self.algorithm = algorithm
         self.static_batch_size = static_batch_size
         self.algo_kwargs = algo_kwargs
         self.num_batches = num_batches
         self.batch_size = batch_size
-        self.sizes = sizes
+        self.sizes = sorted(sizes)
         self.seed = seed
         self.chunk_size = chunk_size
-        self.cache_dir = cache_dir
-        self.batches, self.features, self._spec, self.max_num_nodes, self.max_num_steps = None, None, None, None, None
-        assert "length" not in self.algo_kwargs, "length must be specified in sizes"
 
-    @property
-    def spec(self):
-        if self._spec is None:
-            self._maybe_load_data()
-        return self._spec
+        # This is a hack to get the spec. We should not need to do this.
+        self.spec = AlgorithmSampler(self.algorithm, length=sizes[0], **self.algo_kwargs).spec
 
-    def _maybe_load_data(self, verbose: bool = False):
-        if self.batches is not None:
-            return
-        spec, batches, features, max_num_nodes, max_num_steps = load_data(algorithm=self.algorithm, 
-                                                                          num_batches=self.num_batches, 
-                                                                          sizes=self.sizes, 
-                                                                          seed=self.seed, 
-                                                                          batch_size=self.batch_size, 
-                                                                          chunk_size=self.chunk_size, 
-                                                                          cache_dir=self.cache_dir, 
-                                                                          verbose=verbose)
-        self._spec = spec
-        self.batches = batches
-        self.features = features
-        self.max_num_nodes = max_num_nodes
-        self.max_num_steps = max_num_steps
+        # internal state
+        self._iter     = None     # will hold the active iterator
+        self._last_idx = -1       # last index we successfully returned
+
+
+    def _get_batch_iterator(self):
+        combined_sampler = combined_algorithm_sampler(
+            algorithm=self.algorithm, 
+            sizes=self.sizes, 
+            seed=self.seed, 
+            algo_kwargs=self.algo_kwargs
+        )
+        return batch_iterator(
+            spec=self.spec,
+            seed=self.seed,
+            chunk_size=self.chunk_size, 
+            batch_size=self.batch_size, 
+            static_batch_size=self.static_batch_size,
+            sampler=combined_sampler,
+            warm_up=1000)
+
 
     def __getitem__(self, idx: int) -> FeatureBatch:
-        self._maybe_load_data()
-        batch = self.batches[idx]
-        features, is_first, is_last = batch_to_features(batch=batch, 
-                                                        features=self.features, 
-                                                        chunk_size=self.chunk_size)
-        
-        batch_feature = collate_features(self.spec, 
-                                        features=features, 
-                                        min_hint_steps=self.chunk_size if self.static_batch_size else 0, 
-                                        min_num_nodes=self.max_num_nodes if self.static_batch_size else 0)
-        return batch_feature, is_first, is_last
-      
+        if idx >= len(self):
+            self._iter = None
+            raise IndexError(f"Index {idx} out of range for size {len(self)}")
+
+        # if we're starting, or idx has gone backwards, re‐start
+        if self._iter is None or idx <= self._last_idx:
+            # Create the batch iterator lazily to avoid pickling issues
+            self._iter     = iter(self._get_batch_iterator())
+            self._last_idx = -1
+
+        # advance from (last_idx+1) up to idx, inclusive
+        for i in range(self._last_idx + 1, idx + 1):
+            try:
+                batch = next(self._iter)
+            except StopIteration:
+                raise IndexError(f"Batch iterator exhausted at position {i}") 
+        self._last_idx = idx
+        return batch
 
     def __len__(self):
         return self.num_batches
@@ -379,8 +258,8 @@ class AlgoFeatureDataset(Dataset):
     def get_dataloader(self, num_workers: int = 0):
         return DataLoader(self, 
                           shuffle=False,
-                          batch_size=1,
-                          collate_fn=lambda x: x[0],
+                          batch_size=None,
+                          collate_fn=_collate_fn,
                           persistent_workers=num_workers > 0,
                           num_workers=num_workers)
     
@@ -416,9 +295,10 @@ class CyclicAlgoFeatureDataset(Dataset):
     def get_dataloader(self, num_workers: int = 0):
         return DataLoader(self, 
                           shuffle=False,
-                          batch_size=1,
-                          collate_fn=lambda x: x[0],
+                          batch_size=None,
+                          collate_fn=_collate_fn,
                           persistent_workers=num_workers > 0,
+                          prefetch_factor=30,
                           num_workers=num_workers)
     
 
@@ -449,9 +329,10 @@ class StackedAlgoFeatureDataset(Dataset):
     def get_dataloader(self, num_workers: int = 0):
         return DataLoader(self, 
                           shuffle=False,
-                          collate_fn=lambda x: x[0],
-                          batch_size=1,
+                          batch_size=None,
+                          collate_fn=_collate_fn,
                           persistent_workers=num_workers > 0,
+                          prefetch_factor=30,
                           num_workers=num_workers)
 
 

@@ -2,7 +2,6 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 import os
-from pathlib import Path
 from typing import Dict, List, Optional, Union
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
@@ -13,7 +12,7 @@ from .trainer_utils import CustomRichProgressBar, ModelCheckpointWithWandbSync
 from .specs import CLRS30Algorithms, Algorithm, Spec, Feature
 from .processors import Processor
 from .model import Model, ModelState, ReconstMode
-from .dataset import AlgoFeatureDataset, DictFeatureBatch, StackedAlgoFeatureDataset, CyclicAlgoFeatureDataset, load_data_parallel
+from .dataset import AlgoFeatureDataset, DictFeatureBatch, StackedAlgoFeatureDataset, CyclicAlgoFeatureDataset
 
 class Split(str, Enum):
     TRAIN = "train"
@@ -51,7 +50,6 @@ class TrainerConfig:
 
     # Monitoring Settings
     val_check_interval: int = 500                            # Number of training steps between validation checks
-    cache_dir: Optional[Path] = None                         # Cache directory for data
 
     def to_dict(self):
         return {k: v for k, v in asdict(self).items() if not k.startswith("_")}
@@ -70,15 +68,10 @@ class TrainerConfig:
         else:
             self.num_train_steps = self.train_batches
 
-        if self.cache_dir is not None:
-            self.cache_dir = Path(self.cache_dir)
-
     def get_dataloader(self, split: Split, num_workers: int = 0):
         seed = self.seed + (1 if split == Split.VAL else 0)
         num_batches = self.train_batches if split == Split.TRAIN else self.val_batches
         algo_datasets = []
-
-        algo_configs = defaultdict(dict)
 
         for algorithm in self.algorithms:
             algo_sizes = self.sizes
@@ -93,17 +86,6 @@ class TrainerConfig:
                 max_length = (max_length * 5) // 4
                 algo_sizes = [max_length]*len(algo_sizes)
 
-            algo_configs[algorithm] = {
-                "sizes": algo_sizes,
-                "chunk_size": self.chunk_size,
-                "batch_size": self.batch_size,
-                "num_batches": num_batches,
-                "seed": seed,
-                "cache_dir": self.cache_dir,
-                "static_batch_size": self.static_batch_size,
-                "algo_kwargs": {}
-            }
-
             algo_datasets.append(AlgoFeatureDataset(
                                                 algorithm=algorithm,
                                                 sizes=algo_sizes,
@@ -111,12 +93,9 @@ class TrainerConfig:
                                                 batch_size=self.batch_size,
                                                 num_batches=num_batches,
                                                 seed=seed,
-                                                cache_dir=self.cache_dir,
                                                 static_batch_size=self.static_batch_size,
                                                 algo_kwargs={}))    
             
-        # Load all the data in parallel and cache it to the disk
-        load_data_parallel(algo_configs)
         dataset = StackedAlgoFeatureDataset(algo_datasets) if self.stacked else CyclicAlgoFeatureDataset(algo_datasets)
         return dataset.get_dataloader(num_workers=num_workers)
         
@@ -261,8 +240,7 @@ def train(config: TrainerConfig,
 
     # Dummy call to get the specs
     train_dl = config.get_dataloader(Split.TRAIN, num_workers=num_workers)
-    val_dl = config.get_dataloader(Split.VAL, num_workers=num_workers)
-    next(iter(val_dl)) # Dummy call to get the specs
+    val_dl = config.get_dataloader(Split.VAL, num_workers=num_workers)        
     model_specs = val_dl.dataset.specs
 
     model = config.get_model(model_specs)

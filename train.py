@@ -24,30 +24,35 @@ app = typer.Typer(
 @app.command("train")
 def main(
     algos: List[AlgorithmEnum] = typer.Option(CLRS30Algorithms, "--algos", "-a", help="Algorithms to train", ),
-    sizes: Optional[List[int]] = typer.Option(None, "--sizes", "-s", help="Sizes to train"),
+    sizes: List[int] = typer.Option([4, 7, 11, 13, 16], "--sizes", "-s", help="Sizes to train, max value is used for validation"),
     batch_size: int = typer.Option(32, "--batch-size", "-b", help="Batch size"),
-    run_name: str = typer.Option("run_1", "--run-name", "-n", help="Run name"),
+    total_train_batches: int = typer.Option(10000, "--num-train-batches", "-t", help="Total training batches"),
+    num_val_batches_per_algo: int = typer.Option(10, "--num-val-batches", "-v", help="Number of validation batches per algorithm"),
+    chunk_size: int = typer.Option(16, "--chunk-size", "--cs", help="The maximum number of hint steps per batch, <0 means no chunking"),
+    run_name: str = typer.Option("run", "--run-name", "-r", help="Run name"),
     project_name: str = typer.Option("clrs", "--project-name", "-p", help="Project name"),
-    ckpt_dir: Path = typer.Option("./checkpoints", "--ckpt-dir", "-c", help="Checkpoint directory"),
-    seed: int = typer.Option(42, "--seed", "-sd", help="Seed"),
+    ckpt_dir: Path = typer.Option("./checkpoints", "--ckpt-dir", help="Checkpoint directory"),
+    seed: int = typer.Option(42, "--seed", help="Seed"),
+    dynamic_batch_size: bool = typer.Option(False, "--dynamic-batch-size", "-DB", help="Use non-static batch size", is_flag=True, flag_value=True),
     stacked: bool = typer.Option(False, "--stacked", "-S", help="Stacked training", is_flag=True, flag_value=True),
-    compile: bool = typer.Option(False, "--compile"),
+    compile: bool = typer.Option(False, "--compile", "-C", help="Compile model", is_flag=True, flag_value=True),
     debug: bool = typer.Option(False, "--debug", "-D", help="Debug mode", is_flag=True, flag_value=True),
 ) -> None:
     
     if stacked:
         assert len(algos) > 1, "Stacked training requires at least two algorithms"
         
-    config = TrainerConfig(algos=algos, 
-                        sizes=sizes,
-                        seed=seed, 
-                        stacked=stacked,
-                        batch_size=batch_size, 
-                        static_batch_size=compile)
-
-   
-    if torch.cuda.is_available() and compile:
-        print("WARNING: Currently compiling seems to be broken on CUDA. Use at your own risk!")
+    config = TrainerConfig(
+        algorithms=algos,
+        sizes=sizes,
+        seed=seed,
+        stacked=stacked,
+        batch_size=batch_size,
+        static_batch_size=not dynamic_batch_size,
+        chunk_size=chunk_size,
+        train_batches=total_train_batches,
+        val_batches=num_val_batches_per_algo,
+    )
 
     print("Config:", config.to_dict())
     train(

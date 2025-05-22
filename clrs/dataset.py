@@ -3,6 +3,7 @@ import pickle
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 from .specs import AlgorithmEnum, Feature, Spec, Stage, NumNodes, NumSteps, Type
 from .algorithm import Algorithm
 from typing import List, Dict, Optional, Tuple, Union
@@ -15,7 +16,7 @@ IsFirst = bool
 FeatureBatch = Tuple[Feature, IsFirst, IsLast]
 
 
-def sample_features(algo: Algorithm, num_samples: int, cache_dir: Union[str, Path] = None) -> List[Feature]:
+def sample_features(algo: Algorithm, num_samples: int, cache_dir: Union[str, Path] = None, verbose: bool = True) -> List[Feature]:
     if cache_dir is not None:
         cache_dir = Path(cache_dir) / algo.name
         if not cache_dir.exists():
@@ -26,7 +27,13 @@ def sample_features(algo: Algorithm, num_samples: int, cache_dir: Union[str, Pat
         
     algo.reset() # Reset the algorithm to ensure reproducibility
     features = []
-    for _ in range(num_samples):
+
+    if verbose:
+        progress_bar = tqdm(range(num_samples), position=1, leave=False)
+    else:
+        progress_bar = range(num_samples)
+
+    for _ in progress_bar:
         features.append(algo.sample_feature())
 
     if cache_dir is not None:
@@ -141,18 +148,27 @@ def load_features(algo: AlgorithmEnum,
                   seed: int, 
                   num_samples: int, 
                   cache_dir: Optional[Union[str, Path]] = None, 
-                  algo_kwargs: Dict = {}) -> Tuple[Spec, List[Feature], NumNodes, NumSteps]:
+                  algo_kwargs: Dict = {},
+                  verbose: bool = True) -> Tuple[Spec, List[Feature], NumNodes, NumSteps]:
     features = [] 
     max_num_nodes = 0
     max_num_steps = 0
     spec = None
 
-    for size in sizes:
+    if verbose:
+        progress_bar = tqdm(sizes, position=0, leave=True)
+    else:
+        progress_bar = sizes
+
+    for size in progress_bar:
+        if verbose:
+            progress_bar.set_description(f"Loading features for {algo} with size {size}")
         algorithm = Algorithm(algo, seed=seed, length=size, **algo_kwargs)
         spec = algorithm.spec if spec is None else spec
         size_features = sample_features(algo=algorithm, 
                                     num_samples=num_samples,
-                                    cache_dir=cache_dir)
+                                    cache_dir=cache_dir,
+                                    verbose=verbose)
             
         for feature in size_features:
             max_num_nodes = max(max_num_nodes, feature[2])
@@ -191,7 +207,7 @@ def batch_to_features(batch: Batch, features: List[Feature], chunk_size: int) ->
     return chunk_features, chunk_idx == 0, is_last
     
 class AlgoFeatureDataset(Dataset):
-    def __init__(self, algo: AlgorithmEnum, 
+    def __init__(self, algorithm: AlgorithmEnum, 
                 sizes: Union[List[int], int], 
                 chunk_size: Optional[int] = 16,
                 seed: int = 42,
@@ -201,15 +217,15 @@ class AlgoFeatureDataset(Dataset):
                 cache_dir: Union[str, Path] = None,
                 algo_kwargs: Dict = {}):
         super().__init__()
-        self.static_batch_size = static_batch_size
-        assert isinstance(algo, AlgorithmEnum), "algo must be an AlgorithmEnum"
+        assert isinstance(algorithm, AlgorithmEnum), "algo must be an AlgorithmEnum"
         if isinstance(sizes, int):
             sizes = [sizes]
 
         assert all(isinstance(size, int) for size in sizes), "All sizes must be an integer"
         assert all(size > 0 for size in sizes), "All sizes must be positive"
 
-        self.algo = algo
+        self.algorithm = algorithm
+        self.static_batch_size = static_batch_size
         self.algo_kwargs = algo_kwargs
         self.num_batches = num_batches
         self.batch_size = batch_size
@@ -217,21 +233,31 @@ class AlgoFeatureDataset(Dataset):
         self.seed = seed
         self.chunk_size = chunk_size
         self.cache_dir = cache_dir
-        self.batches, self.features, self.spec, self.max_num_nodes, self.max_num_steps = None, None, None, None, None
+        self.batches, self.features, self._spec, self.max_num_nodes, self.max_num_steps = None, None, None, None, None
         assert "length" not in self.algo_kwargs, "length must be specified in sizes"
+        self._maybe_load_data(verbose=True) # Just to save the data cache on the disk, and load the spec
+        self.reset()
 
+    def reset(self):
+        self.batches, self.features, self.max_num_nodes, self.max_num_steps = None, None, None, None
 
-    def _maybe_load_data(self):
+    @property
+    def spec(self):
+        if self._spec is None:
+            self._maybe_load_data()
+        return self._spec
+
+    def _maybe_load_data(self, verbose: bool = False):
         if self.batches is not None:
             return
-
         num_samples_per_size = math.ceil(self.batch_size * self.num_batches / len(self.sizes))
-        self.spec, self.features, self.max_num_nodes, self.max_num_steps = load_features(algo=self.algo, 
+        self._spec, self.features, self.max_num_nodes, self.max_num_steps = load_features(algo=self.algorithm, 
                                                                                         sizes=self.sizes, 
                                                                                         seed=self.seed, 
                                                                                         num_samples=num_samples_per_size, 
                                                                                         cache_dir=self.cache_dir, 
-                                                                                        algo_kwargs=self.algo_kwargs)
+                                                                                        algo_kwargs=self.algo_kwargs,
+                                                                                        verbose=verbose)
             
         # If chunk_size is not specified, use the maximum number of steps in the features
         # Essentially, this means no chunking as every trajectory fits into a single chunk
@@ -263,6 +289,7 @@ class AlgoFeatureDataset(Dataset):
         return DataLoader(self, 
                           shuffle=False,
                           batch_size=1,
+                          collate_fn=lambda x: x[0],
                           persistent_workers=num_workers > 0,
                           num_workers=num_workers)
     
@@ -272,9 +299,13 @@ class CyclicAlgoFeatureDataset(Dataset):
     def __init__(self, datasets: List[AlgoFeatureDataset]):
         super().__init__()
         assert all(isinstance(dataset, AlgoFeatureDataset) for dataset in datasets), "All datasets must be AlgoFeatureDataset"
-        assert len(set([ds.algo for ds in datasets])) == len(datasets), "All datasets must have unique algorithms"
+        assert len(set([ds.algorithm for ds in datasets])) == len(datasets), "All datasets must have unique algorithms"
         assert all(len(dataset) == len(datasets[0]) for dataset in datasets), "All datasets must have the same number of batches"
         self.datasets = datasets
+
+    @property
+    def specs(self):
+        return {ds.algorithm: ds.spec for ds in self.datasets}
 
     def __getitem__(self, idx: int) -> Dict[AlgorithmEnum, FeatureBatch]:
         if idx >= len(self):
@@ -286,7 +317,7 @@ class CyclicAlgoFeatureDataset(Dataset):
 
         ds = self.datasets[dataset_idx]
         feature_batch = ds[offset_idx]
-        return {ds.algo: feature_batch}
+        return {ds.algorithm: feature_batch}
     
     def __len__(self):
         return len(self.datasets[0]) * len(self.datasets)
@@ -295,6 +326,7 @@ class CyclicAlgoFeatureDataset(Dataset):
         return DataLoader(self, 
                           shuffle=False,
                           batch_size=1,
+                          collate_fn=lambda x: x[0],
                           persistent_workers=num_workers > 0,
                           num_workers=num_workers)
     
@@ -303,10 +335,14 @@ class StackedAlgoFeatureDataset(Dataset):
     def __init__(self, datasets: List[AlgoFeatureDataset]):
         super().__init__()
         assert all(isinstance(dataset, AlgoFeatureDataset) for dataset in datasets), "All datasets must be AlgoFeatureDataset"
-        assert len(set([ds.algo for ds in datasets])) == len(datasets), "All datasets must have unique algorithms"
+        assert len(set([ds.algorithm for ds in datasets])) == len(datasets), "All datasets must have unique algorithms"
         assert all(len(dataset) == len(datasets[0]) for dataset in datasets), "All datasets must have the same number of batches"
-        self.datasets = {ds.algo: ds for ds in datasets}
+        self.datasets = {ds.algorithm: ds for ds in datasets}
         self._num_batches = len(datasets[0])
+
+    @property
+    def specs(self):
+        return {ds.algorithm: ds.spec for ds in self.datasets.values()}
 
     def __getitem__(self, idx: int) -> Dict[AlgorithmEnum, FeatureBatch]:
         if idx >= len(self):
@@ -322,6 +358,7 @@ class StackedAlgoFeatureDataset(Dataset):
     def get_dataloader(self, num_workers: int = 0):
         return DataLoader(self, 
                           shuffle=False,
+                          collate_fn=lambda x: x[0],
                           batch_size=1,
                           persistent_workers=num_workers > 0,
                           num_workers=num_workers)
@@ -330,7 +367,7 @@ class StackedAlgoFeatureDataset(Dataset):
 
 if __name__ == "__main__":
     from .utils import tree_map
-    dataset = AlgoFeatureDataset(algo=AlgorithmEnum.articulation_points, 
+    dataset = AlgoFeatureDataset(algorithm=AlgorithmEnum.articulation_points, 
                                         sizes=[4, 8, 12], 
                                         seed=42,
                                         chunk_size=8, 
@@ -350,6 +387,7 @@ if __name__ == "__main__":
     dl_1 = dataset.get_dataloader(num_workers=0)
     batches_1 = []
     for idx, batch in enumerate(dl_1):
+        import ipdb; ipdb.set_trace()
         batches_1.append(batch)
         if idx >= 4:
             break

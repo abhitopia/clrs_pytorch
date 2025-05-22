@@ -750,7 +750,9 @@ class AlgoEvaluator(nn.Module):
             prediction = self.replace_permutations_with_pointers(prediction)
             target = self.replace_permutations_with_pointers(target)
         
-        for name, evaluator in self.evaluators[Stage.OUTPUT].items():
+        # Because output, may or may not be present depending on the batch
+        for name in target[Stage.OUTPUT].keys():
+            evaluator = self.evaluators[Stage.OUTPUT][name]
             evaluations[Stage.OUTPUT][name] = evaluator(prediction[Stage.OUTPUT][name], target[Stage.OUTPUT][name], steps, num_nodes)
 
         if self.decode_hints:
@@ -778,7 +780,9 @@ class AlgoLoss(nn.Module):
     def forward(self, prediction: Trajectory, target: Trajectory, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Trajectory:
         losses = {Stage.OUTPUT: {}}
 
-        for name, loss in self.loss[Stage.OUTPUT].items():
+        # Because output, may or may not be present depending on the batch
+        for name in target[Stage.OUTPUT].keys():
+            loss = self.loss[Stage.OUTPUT][name]
             losses[Stage.OUTPUT][name] = loss(prediction[Stage.OUTPUT][name], target[Stage.OUTPUT][name], steps, num_nodes)
 
         if self.decode_hints:

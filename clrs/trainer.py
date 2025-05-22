@@ -2,6 +2,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
@@ -12,98 +13,96 @@ from .trainer_utils import CustomRichProgressBar, normalize_state_dict, ModelChe
 from .specs import CLRS30Algorithms, AlgorithmEnum, Spec
 from .processors import ProcessorEnum
 from .model import Model, ReconstMode
-from .dataset_archive import get_dataset
+from .dataset import AlgoFeatureDataset, StackedAlgoFeatureDataset, CyclicAlgoFeatureDataset, FeatureBatch
 
 class Split(str, Enum):
     TRAIN = "train"
     VAL = "val"
-    TEST = "test"
 
 @dataclass
 class TrainerConfig:
-    algos: Union[AlgorithmEnum, List[AlgorithmEnum]] = field(default_factory=lambda: CLRS30Algorithms)
-    sizes: Optional[List[int]] = None
-    num_steps: int = 10000
-    static_batch_size: bool = True
+    algorithms: Union[AlgorithmEnum, List[AlgorithmEnum]] = field(default_factory=lambda: CLRS30Algorithms)
+    sizes: List[int] = field(default_factory=lambda: [4, 7, 11, 13, 16])  # Training sizes, max size is used for validation
+    train_batches: int = 10000                              # Number of total training batches per algorithm
+    val_batches: int = 10                                   # Number of validation batches per algorithm
+    static_batch_size: bool = True                          # If True, then the num nodes and num steps are fixed for each batch per algorithm
     stacked: bool = False                                   # Paper found non-stacked training to be better      
-    batch_size: int = 32
-    seed: int = 42
+    chunk_size: Optional[int] = 16                          # Number of hints per batch, if <0 or None, then no chunking 
+    batch_size: int = 32                                    # Number of samples per batch
+    seed: int = 42                                          # Random seed used for data generation
 
     # Optimizer Settings
     learning_rate: float = 1e-3
 
-    # Data Settings
-    generate_on_the_fly: bool = True
-
     # Training Settings (Paper default values)
-    encode_hints: bool = True                                
-    decode_hints: bool = True                                
-    use_lstm: bool = False                                   
-    hint_reconst_mode: ReconstMode = ReconstMode.SOFT        
-    hint_teacher_forcing: float = 0.0                        
-    dropout: float = 0.0                                    
+    encode_hints: bool = True                                # Encode hints into processor embeddings per hint step
+    decode_hints: bool = True                                # Decode hints from processor embeddings per hint step
+    use_lstm: bool = False                                   # Use LSTM across hint steps
+    hint_reconst_mode: ReconstMode = ReconstMode.SOFT        # Reconstruction mode for hints
+    hint_teacher_forcing: float = 0.0                        # Teacher forcing ratio for hints, 0.0 means no teacher forcing
+    dropout: float = 0.0                                     # Dropout probability
 
     # Model config
-    hidden_dim: int = 128
-    triplet_fts_size: int = 8
-    use_ln: bool = True
-    nb_heads: int = 1
-    mp_steps: int = 1
+    hidden_dim: int = 128                                    # Hidden dimension of the processor and everywhere else
+    triplet_fts_size: int = 8                                # Number of features for the triplet GNN (if using triplet variant of GNN)
+    use_ln: bool = True                                      # Use layer normalization
+    nb_heads: int = 1                                        # Number of attention heads (if using GAT variant of GNN)
+    mp_steps: int = 1                                        # Number of message passing steps of GNN per hint step
 
     # Monitoring Settings
-    val_check_interval: int = 500
+    val_check_interval: int = 500                            # Number of training steps between validation checks
 
     def to_dict(self):
         return {k: v for k, v in asdict(self).items() if not k.startswith("_")}
 
     def __post_init__(self):
-        if isinstance(self.algos, AlgorithmEnum):
-            self.algos = [self.algos]
+        if isinstance(self.algorithms, AlgorithmEnum):
+            self.algorithms = [self.algorithms]
 
+        if self.chunk_size is not None and self.chunk_size < 0:
+            self.chunk_size = None
 
-        self.algos = sorted(self.algos)
-
-        self._specs = None
+        self.algorithms = sorted(self.algorithms)
         if not self.stacked:
-            # As per the generalise algorithmic learner paper
-            # They train num_steps cycles
-            self.num_steps = self.num_steps * len(self.algos)
-            self.val_check_interval = min(self.val_check_interval * len(self.algos), 1500)
-            self.test_check_interval = self.val_check_interval * 10
-
-    @property
-    def specs(self):
-        if self._specs is None:
-            raise ValueError("Specs not set, you must get the training dataloader first")
-        return self._specs
-
+            # As per the generalise algorithmic learner paper, they train num_steps cycles
+            self.num_train_steps = self.train_batches * len(self.algorithms)
+        else:
+            self.num_train_steps = self.train_batches
 
     def get_dataloader(self, split: Split, num_workers: int = 0):
+        cache_dir = Path(__file__).parent.parent / ".cache"
+        seed = self.seed + (1 if split == Split.VAL else 0)
+        num_batches = self.train_batches if split == Split.TRAIN else self.val_batches
+        algo_datasets = []
 
-        if split == Split.TRAIN:
-            seed = self.seed + 1
-        elif split == Split.VAL:
-            seed = self.seed + 2
-        else:
-            seed = self.seed + 3
+        for algorithm in self.algorithms:
+            algo_sizes = self.sizes
 
-        ds = get_dataset(self.algos, 
-                         split=split.value,
-                         sizes=self.sizes,
-                         static_batch_size=self.static_batch_size,
-                         generate_on_the_fly=self.generate_on_the_fly if split == Split.TRAIN else False,
-                         stacked=self.stacked,
-                         seed=seed)
-        
-        self._specs = ds.specs if split == Split.TRAIN else self._specs
-        
-        return ds.get_dataloader(batch_size=self.batch_size, 
-                              shuffle=True if split == Split.TRAIN else False,
-                              drop_last=True, # Avoid extra compilation 
-                              num_workers=num_workers)
+            if split == "val":
+                algo_sizes = [max(algo_sizes)]
+
+            # As per the generalise algorithmic learner paper, we replace the max length with 5/4 of the max length for 
+            # string matching algorithms for training. For validation, we use the max length.
+            if algorithm in [AlgorithmEnum.naive_string_matcher, AlgorithmEnum.kmp_matcher] and split == Split.TRAIN:
+                max_length = max(algo_sizes)
+                max_length = (max_length * 5) // 4
+                algo_sizes = [max_length]*len(algo_sizes)
+
+            algo_datasets.append(AlgoFeatureDataset(
+                                                algorithm=algorithm,
+                                                sizes=algo_sizes,
+                                                chunk_size=self.chunk_size,
+                                                batch_size=self.batch_size,
+                                                num_batches=num_batches,
+                                                seed=seed,
+                                                cache_dir=cache_dir,
+                                                static_batch_size=self.static_batch_size,
+                                                algo_kwargs={}))    
+        dataset = StackedAlgoFeatureDataset(algo_datasets) if self.stacked else CyclicAlgoFeatureDataset(algo_datasets)
+        return dataset.get_dataloader(num_workers=num_workers)
         
     
-    def get_model(self):
+    def get_model(self, specs: Dict[AlgorithmEnum, Spec]):
         processors_kwargs = {
             "hidden_dim": self.hidden_dim, 
             "use_ln": self.use_ln, 
@@ -111,13 +110,14 @@ class TrainerConfig:
             "triplet_fts_size": self.triplet_fts_size,
             "mp_steps": self.mp_steps
         }
-        if len(self.algos) == 1:
+        if len(self.algorithms) == 1:
+            # Paper uses triplet GMPNN for single algorithm training
             processor = ProcessorEnum.triplet_gmpnn(**processors_kwargs)
         else:
+            # Paper uses triplet MPNN for multi-algorithm training
             processor = ProcessorEnum.triplet_mpnn(**processors_kwargs)
 
-
-        model = Model(specs=self.specs,
+        model = Model(specs=specs,
                       processor=processor,
                       hidden_dim=self.hidden_dim,
                       encode_hints=self.encode_hints,
@@ -137,50 +137,15 @@ class TrainerConfig:
                     weight_decay=self.weight_decay)
     
 
-class DataModule(pl.LightningDataModule):
-    def __init__(self, config: TrainerConfig, num_workers: int = 0):
-        super().__init__()
-        self.config = config
-        self.num_workers = num_workers
-
-    def setup(self, stage: Optional[str] = None):
-        self.train_dl = self.config.get_dataloader(Split.TRAIN, num_workers=self.num_workers)
-        self.val_dl = self.config.get_dataloader(Split.VAL, num_workers=self.num_workers)
-        self.test_dl = self.config.get_dataloader(Split.TEST, num_workers=self.num_workers)
-
-    def train_dataloader(self):
-        return self.train_dl
-
-    def val_dataloader(self):
-        return self.val_dl
-    
-    def test_dataloader(self):
-        return self.test_dl
-    
-
 class TrainingModel(pl.LightningModule):
-    def __init__(self, config: TrainerConfig, compile: bool = False):
+    def __init__(self, model: Model, config: TrainerConfig):
         super().__init__()
         self.config = config
-        self.compile = compile
-        self.model = self.config.get_model()
+        self.model = model
         self.learning_rate = config.learning_rate
-        self.save_hyperparameters(config.to_dict(), ignore=["model", "config", "compile"])
+        self.save_hyperparameters(config.to_dict(), ignore=["model", "config", "compile", "specs"])
         self.examples_seen = defaultdict(int)
         self.steps_done = defaultdict(int)
-        if self.compile:
-            print("Compiling model using torch.compile...")
-            self.model.compile()
-        else:
-            print("Model compilation disabled; skipping torch.compile.")
-
-    def on_load_checkpoint(self, checkpoint):
-        if self.model is None:
-            self.configure_model()
-        ckpt_state_dict = checkpoint["state_dict"]
-        current_state_dict = self.state_dict()
-        new_state_dict = normalize_state_dict(current_state_dict, ckpt_state_dict)
-        checkpoint["state_dict"] = new_state_dict
 
     def log_metrics(self, evaluations, losses, phase: str):
         total_loss, scores = 0.0, []
@@ -216,27 +181,26 @@ class TrainingModel(pl.LightningModule):
         self.log_dict(total_metrics, on_step=on_step, on_epoch=on_epoch, batch_size=batch_size, prog_bar=True)
         return total_loss
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch: Dict[AlgorithmEnum, FeatureBatch], batch_idx: int):
+        # import ipdb; ipdb.set_trace()
+
+        is_first = {algo: is_first for algo, (_, is_first, _) in batch.items()}
+        is_last = {algo: is_last for algo, (_, _, is_last) in batch.items()}
+        features = {algo: feature for algo, (feature, _, _) in batch.items()}
+
         torch.compiler.cudagraph_mark_step_begin()
-        predictions, losses, evaluations = self.model(batch)
+        predictions, losses, evaluations = self.model(features)
         total_loss = self.log_metrics(evaluations, losses, "train")
         return total_loss
-    
-    # def on_train_batch_end(self, outputs: Any, batch: Any, batch_idx: int):
-    #     step = self.global_step
-    #     if step == 0 or step % self.config.test_check_interval == 0:
-    #         print(f"Starting testing epoch...")
-    #         self.trainer.test(datamodule=self.datamodule, ckpt_path=None, verbose=True)
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch: Dict[AlgorithmEnum, FeatureBatch], batch_idx: int):
+        # import ipdb; ipdb.set_trace()    
+        is_first = {algo: is_first for algo, (_, is_first, _) in batch.items()}
+        is_last = {algo: is_last for algo, (_, _, is_last) in batch.items()}
+        features = {algo: feature for algo, (feature, _, _) in batch.items()}
         torch.compiler.cudagraph_mark_step_begin()
-        prediction, losses, evaluations = self.model(batch)
+        prediction, losses, evaluations = self.model(features)
         _ = self.log_metrics(evaluations, losses, "val")
-
-    def test_step(self, batch, batch_idx):
-        torch.compiler.cudagraph_mark_step_begin()
-        prediction, losses, evaluations = self.model(batch)
-        _ = self.log_metrics(evaluations, losses, "test")
 
     def configure_optimizers(self):
         return Adam(self.model.parameters(), 
@@ -260,8 +224,18 @@ def train(config: TrainerConfig,
     pl.seed_everything(config.seed)
 
     # Dummy call to get the specs
-    config.get_dataloader(Split.TRAIN, num_workers=0)
+    train_dl = config.get_dataloader(Split.TRAIN, num_workers=num_workers)
+    val_dl = config.get_dataloader(Split.VAL, num_workers=num_workers)
+    next(iter(val_dl)) # Dummy call to get the specs
+    model_specs = val_dl.dataset.specs
 
+    model = config.get_model(model_specs)
+    if compile:
+        print("Compiling model using torch.compile...")
+        model.compile()
+    else:
+        print("Model compilation disabled; skipping torch.compile.")
+    
     if torch.cuda.is_available():
         torch.set_float32_matmul_precision('high')
 
@@ -313,7 +287,7 @@ def train(config: TrainerConfig,
         accumulate_grad_batches=1,
         callbacks=callbacks,
         max_epochs=-1,
-        max_steps=config.num_steps,
+        max_steps=config.num_train_steps,
         limit_train_batches=None,
         limit_val_batches=None,
         check_val_every_n_epoch=None, # Turn off validation  per epoch
@@ -323,9 +297,11 @@ def train(config: TrainerConfig,
     )
 
     with trainer.init_module():
-        model = TrainingModel(config, compile=compile)
+        model = TrainingModel(model, config)
 
-    trainer.fit(model, datamodule=DataModule(config, num_workers=num_workers))
+    trainer.fit(model, 
+                train_dataloaders=train_dl, 
+                val_dataloaders=val_dl)
 
 
 

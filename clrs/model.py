@@ -889,6 +889,16 @@ class AlgoDecoder(nn.ModuleDict):
 
         return trajectory, raw_trajectory
 
+
+class ModelState(NamedTuple):
+    processor_state: Tensor
+    lstm_state: Optional[LSTMState]
+
+    @classmethod
+    def empty(cls, batch_size: int, nb_nodes: int, hidden_dim: int, use_lstm: bool, device: torch.device = torch.device("cpu")) -> "ModelState":
+        return cls(processor_state=torch.zeros((batch_size, nb_nodes, hidden_dim), device=device),
+                   lstm_state=LSTMState.empty((batch_size * nb_nodes, hidden_dim), device=device) if use_lstm else None)
+
 class AlgoModel(torch.nn.Module):
     def __init__(self, 
                  spec: Spec, 
@@ -940,28 +950,29 @@ class AlgoModel(torch.nn.Module):
         # return compiled_self
         return self
 
-    def apply_lstm(self, processor_state: Tensor, lstm_state: Optional[LSTMState]) -> Tuple[Tensor, Optional[LSTMState]]:
+    def apply_lstm(self, model_state: ModelState) -> ModelState:
         if self.use_lstm:
+            processor_state, lstm_state = model_state
             assert lstm_state is not None
             batch_size, nb_nodes, _ = processor_state.shape            
             # LSTM takes the procesor state as its input_x for the current time step
             lstm_input = processor_state.reshape(batch_size * nb_nodes, self.hidden_dim)
             lstm_out, lstm_state = self.lstm_cell(lstm_input, lstm_state)
             processor_state = lstm_out.reshape(batch_size, nb_nodes, self.hidden_dim)
+            return ModelState(processor_state=processor_state, lstm_state=lstm_state)
 
-        return processor_state, lstm_state
+        return model_state
 
     def step(self, 
              input: Input, 
              step_hint: Hints, 
              num_nodes: NumNodes, 
-             processor_state: Tensor, # Processor's h_{t-1} for this step
-             lstm_state: Optional[LSTMState] = None # LSTM's (h,c) from previous step
-             ) -> Tuple[Output, Hints, Tensor, Optional[LSTMState]]:
+             model_state: ModelState,
+             ) -> Tuple[Output, Hints, ModelState]:
         
         graph_features: GraphFeatures = self.encoder(input, step_hint, num_nodes)
 
-        nxt_processor_state, nxt_edge = processor_state, None 
+        nxt_processor_state, nxt_edge = model_state.processor_state, None 
         nxt_processor_state, nxt_edge = self.processor(
             graph_features,
             processor_state=nxt_processor_state, # hidden for GNN processor within the step's mp_steps
@@ -969,10 +980,10 @@ class AlgoModel(torch.nn.Module):
         )
 
         # Output of GNN processing for this step becomes input to LSTM (if used)
-        nxt_processor_state = self.dropout(nxt_processor_state)
-        nxt_processor_state, nxt_lstm_state = self.apply_lstm(nxt_processor_state, lstm_state)
+        nxt_model_state = self.apply_lstm(ModelState(processor_state=self.dropout(nxt_processor_state), 
+                                                     lstm_state=model_state.lstm_state))
 
-        nodes_fts_decoder = torch.cat([graph_features.node_fts, processor_state, nxt_processor_state], dim=-1)
+        nodes_fts_decoder = torch.cat([graph_features.node_fts, model_state.processor_state, nxt_model_state.processor_state], dim=-1)
         edge_fts_decoder = graph_features.edge_fts 
         if nxt_edge is not None:
             edge_fts_decoder = torch.cat([graph_features.edge_fts, nxt_edge], dim=-1)
@@ -983,7 +994,8 @@ class AlgoModel(torch.nn.Module):
                                            graph_fts=graph_features.graph_fts)
         
         prediction_step, raw_prediction_step = self.decoder(graph_features_decoder, num_nodes=num_nodes)
-        return prediction_step, raw_prediction_step, nxt_processor_state, nxt_lstm_state
+
+        return prediction_step, raw_prediction_step, nxt_model_state
     
     @staticmethod
     def get_hint_at_step(hints: Hints, start_step: int, end_step: Optional[int] = None) -> Hints:
@@ -1040,10 +1052,7 @@ class AlgoModel(torch.nn.Module):
         max_steps = next(iter(hints.values())).shape[0]
         # max_steps = torch.max(num_steps).item()
 
-        processor_state = torch.zeros((batch_size, nb_nodes, self.hidden_dim), device=device)
-        # Initialize lstm_state (LSTM's own (h,c) from the previous time step)
-        lstm_state: Optional[LSTMState] = LSTMState.empty((batch_size * nb_nodes, self.hidden_dim), device=device) if self.use_lstm else None
-
+        model_state = ModelState.empty(batch_size, nb_nodes, self.hidden_dim, self.use_lstm, device=device)
 
          # Disable the loop as it makes the computational graph too large for torch.compile
         prediction: Trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
@@ -1053,12 +1062,11 @@ class AlgoModel(torch.nn.Module):
             predicted_hints_at_step = self.get_hint_at_step(prediction[Stage.HINT], step_idx-1) 
             hints_at_step = self.teacher_force(orig_hints_at_step, predicted_hints_at_step)
             
-            prediction_step, raw_prediction_step, processor_state, lstm_state = self.step(
+            prediction_step, raw_prediction_step, model_state = self.step(
                 input=input,
                 step_hint=hints_at_step,
                 num_nodes=num_nodes,
-                processor_state=processor_state,          
-                lstm_state=lstm_state                     
+                model_state=model_state,          
             )
 
             not_done_mask = num_steps > (step_idx + 1)

@@ -928,17 +928,10 @@ class AlgoModel(torch.nn.Module):
             "mode": "reduce-overhead",
             "backend": "inductor"  # Changed back to inductor for better performance
         }
-        # self.dropout = torch.compile(self.dropout, **compilation_kwargs)
-        # self.encoder = torch.compile(self.encoder, **compilation_kwargs)
-        # self.decoder = torch.compile(self.decoder, **compilation_kwargs)
-        # self.processor = torch.compile(self.processor, **compilation_kwargs)
         self.loss = torch.compile(self.loss, **compilation_kwargs)
         self.evaluator = torch.compile(self.evaluator, **compilation_kwargs)
-        # if self.use_lstm:
-        #     self.lstm_cell = torch.compile(self.lstm_cell, **compilation_kwargs)
         self.step = torch.compile(self.step, **compilation_kwargs)
         # self.teacher_force = torch.compile(self.teacher_force, **compilation_kwargs)
-        # self.apply_lstm = torch.compile(self.apply_lstm, **compilation_kwargs)
         # self.get_hint_at_step = torch.compile(self.get_hint_at_step, **compilation_kwargs)
         # self.append_step_hints = torch.compile(self.append_step_hints, **compilation_kwargs)
         # self.merge_predicted_output = torch.compile(self.merge_predicted_output, **compilation_kwargs)

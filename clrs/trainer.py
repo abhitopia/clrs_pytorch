@@ -23,7 +23,7 @@ class Split(str, Enum):
 class TrainerConfig:
     algorithms: Union[Algorithm, List[Algorithm]] = field(default_factory=lambda: CLRS30Algorithms)
     sizes: List[int] = field(default_factory=lambda: [4, 7, 11, 13, 16])  # Training sizes, max size is used for validation
-    train_batches: int = 10000                              # Number of total training batches per algorithm
+    train_batches: int = 1000                               # Number of total training batches per algorithm (paper uses 10k across 30 algos. We use 30k)
     val_batches: int = 10                                   # Number of validation batches per algorithm
     static_batch_size: bool = True                          # If True, then the num nodes and num steps are fixed for each batch per algorithm
     stacked: bool = False                                   # Paper found non-stacked training to be better      

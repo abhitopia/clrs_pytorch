@@ -51,6 +51,7 @@ class TrainerConfig:
 
     # Monitoring Settings
     val_check_interval: int = 500                            # Number of training steps between validation checks
+    cache_dir: Optional[Path] = None                         # Cache directory for data
 
     def to_dict(self):
         return {k: v for k, v in asdict(self).items() if not k.startswith("_")}
@@ -69,10 +70,10 @@ class TrainerConfig:
         else:
             self.num_train_steps = self.train_batches
 
-    def get_dataloader(self, split: Split, num_workers: int = 0):
-        # cache_dir = Path(__file__).parent.parent / ".cache"
-        cache_dir = "/tmp/clrs_cache"
+        if self.cache_dir is not None:
+            self.cache_dir = Path(self.cache_dir)
 
+    def get_dataloader(self, split: Split, num_workers: int = 0):
         seed = self.seed + (1 if split == Split.VAL else 0)
         num_batches = self.train_batches if split == Split.TRAIN else self.val_batches
         algo_datasets = []
@@ -98,7 +99,7 @@ class TrainerConfig:
                 "batch_size": self.batch_size,
                 "num_batches": num_batches,
                 "seed": seed,
-                "cache_dir": cache_dir,
+                "cache_dir": self.cache_dir,
                 "static_batch_size": self.static_batch_size,
                 "algo_kwargs": {}
             }
@@ -110,7 +111,7 @@ class TrainerConfig:
                                                 batch_size=self.batch_size,
                                                 num_batches=num_batches,
                                                 seed=seed,
-                                                cache_dir=cache_dir,
+                                                cache_dir=self.cache_dir,
                                                 static_batch_size=self.static_batch_size,
                                                 algo_kwargs={}))    
             

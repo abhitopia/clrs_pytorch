@@ -900,8 +900,8 @@ class ModelState(NamedTuple):
                    lstm_state=LSTMState.empty((batch_size * nb_nodes, hidden_dim), device=device) if use_lstm else None)
     
     def detach(self) -> "ModelState":
-        return ModelState(processor_state=self.processor_state.detach(),
-                          lstm_state=self.lstm_state.detach() if self.lstm_state is not None else None)
+        return ModelState(processor_state=self.processor_state.clone().detach(),
+                          lstm_state=self.lstm_state.clone().detach() if self.lstm_state is not None else None)
 
 class AlgoModel(torch.nn.Module):
     def __init__(self, 

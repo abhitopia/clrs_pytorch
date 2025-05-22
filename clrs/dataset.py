@@ -170,15 +170,17 @@ def construct_batches(
 
 def _load_data_wrapper(kwargs_dict: Dict[str, Any]):
     """Helper function to unpack keyword arguments for load_data in multiprocessing."""
-    return load_data(**kwargs_dict)
+    load_data(**kwargs_dict)
 
 def load_data_parallel(
     algo_configs: Dict[Algorithm, Dict[str, any]],
     num_processes: Optional[int] = None,
     verbose: bool = True
-) -> Dict[Algorithm, Tuple[Spec, List[Batch], List[Feature], int, int]]:
+) -> None:
     """
     Loads data for multiple algorithms in parallel using multiprocessing.
+    This function is used for its side effect of caching data via `load_data`.
+    It does not return the loaded data to save on IPC costs.
 
     Args:
         algo_configs: A dictionary where keys are Algorithm enums and values are
@@ -192,19 +194,16 @@ def load_data_parallel(
                         - algo_kwargs: Dict (default: {})
                         - cache_dir: Optional[str] (default: None)
         num_processes: Number of parallel processes to use. Defaults to cpu_count() - 1.
+        verbose: If True, allows individual `load_data` calls to print progress (if they are configured to do so).
 
     Returns:
-        A dictionary mapping each algorithm to its loaded data tuple:
-        (Spec, List[Batch], List[Feature], max_num_nodes, max_num_steps).
+        None.
     """
     if num_processes is None:
         num_processes = max(1, cpu_count() - 1) # Ensure at least 1 process
 
     tasks = []
-    algorithms_in_order = [] # To maintain order for results reconstruction
     for alg, config in algo_configs.items():
-        algorithms_in_order.append(alg)
-        # Prepare kwargs for load_data, ensuring all necessary keys are present with defaults
         task_kwargs = {
             'algorithm': alg,
             'num_batches': config.get('num_batches', 1000),
@@ -218,17 +217,15 @@ def load_data_parallel(
         }
         tasks.append(task_kwargs)
 
-    results_list = []
     if tasks: # Proceed only if there are tasks to run
         with Pool(processes=min(num_processes, len(tasks))) as pool: # Don't create more processes than tasks
-            results_list = list(pool.imap(_load_data_wrapper, tasks))
+            # Iterate to ensure all tasks are processed for their side effects (caching)
+            # and to raise any exceptions from worker processes.
+            for _ in pool.imap(_load_data_wrapper, tasks):
+                pass 
 
-    results_dict = {}
-    for i, alg in enumerate(algorithms_in_order):
-        if i < len(results_list): # Check if result exists for the algorithm
-             results_dict[alg] = results_list[i]
-        
-    return results_dict
+    # No results are returned to save IPC overhead.
+    return None
 
 def load_data(algorithm: Algorithm, 
               num_batches: int = 1000,

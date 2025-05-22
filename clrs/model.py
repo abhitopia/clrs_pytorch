@@ -945,14 +945,13 @@ class AlgoModel(torch.nn.Module):
         self.loss = torch.compile(self.loss, **compilation_kwargs)
         self.evaluator = torch.compile(self.evaluator, **compilation_kwargs)
         self.step = torch.compile(self.step, **compilation_kwargs)
-        # self.teacher_force = torch.compile(self.teacher_force, **compilation_kwargs)
+        self.teacher_force = torch.compile(self.teacher_force, **compilation_kwargs)
+        # self.merge_predicted_output = torch.compile(self.merge_predicted_output, **compilation_kwargs)
+        return self
         # self.get_hint_at_step = torch.compile(self.get_hint_at_step, **compilation_kwargs)
         # self.append_step_hints = torch.compile(self.append_step_hints, **compilation_kwargs)
-        # self.merge_predicted_output = torch.compile(self.merge_predicted_output, **compilation_kwargs)
-
         # compiled_self = torch.compile(self, fullgraph=False, mode="reduce-overhead", backend="inductor")
         # return compiled_self
-        return self
 
     def apply_lstm(self, model_state: ModelState) -> ModelState:
         if self.use_lstm:

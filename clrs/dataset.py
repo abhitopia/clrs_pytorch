@@ -4,8 +4,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
-from .specs import AlgorithmEnum, Feature, Spec, Stage, NumNodes, NumSteps, Type
-from .algorithm import Algorithm
+from .specs import Algorithm, Feature, Spec, Stage, NumNodes, NumSteps, Type
+from .algorithm import AlgorithmSampler
 from typing import List, Dict, Optional, Tuple, Union
 from pathlib import Path
 
@@ -14,10 +14,10 @@ Batch = Tuple[List[int], int, bool]
 IsLast = bool
 IsFirst = bool
 FeatureBatch = Tuple[Feature, IsFirst, IsLast]
-DictFeatureBatch = Tuple[Dict[AlgorithmEnum, FeatureBatch], Dict[AlgorithmEnum, IsFirst], Dict[AlgorithmEnum, IsLast]]
+DictFeatureBatch = Tuple[Dict[Algorithm, FeatureBatch], Dict[Algorithm, IsFirst], Dict[Algorithm, IsLast]]
 
 
-def sample_features(algo: Algorithm, num_samples: int, cache_dir: Union[str, Path] = None, verbose: bool = True) -> List[Feature]:
+def sample_features(algo: AlgorithmSampler, num_samples: int, cache_dir: Union[str, Path] = None, verbose: bool = True) -> List[Feature]:
     if cache_dir is not None:
         cache_dir = Path(cache_dir) / algo.name
         if not cache_dir.exists():
@@ -144,7 +144,7 @@ def construct_batches(chunk_size: int, batch_size: int, features: List[Feature],
 
     return batches
 
-def load_features(algo: AlgorithmEnum, 
+def load_features(algo: Algorithm, 
                   sizes: List[int], 
                   seed: int, 
                   num_samples: int, 
@@ -164,7 +164,7 @@ def load_features(algo: AlgorithmEnum,
     for size in progress_bar:
         if verbose:
             progress_bar.set_description(f"Loading features for {algo} with size {size}")
-        algorithm = Algorithm(algo, seed=seed, length=size, **algo_kwargs)
+        algorithm = AlgorithmSampler(algo, seed=seed, length=size, **algo_kwargs)
         spec = algorithm.spec if spec is None else spec
         size_features = sample_features(algo=algorithm, 
                                     num_samples=num_samples,
@@ -208,7 +208,7 @@ def batch_to_features(batch: Batch, features: List[Feature], chunk_size: int) ->
     return chunk_features, chunk_idx == 0, is_last
     
 class AlgoFeatureDataset(Dataset):
-    def __init__(self, algorithm: AlgorithmEnum, 
+    def __init__(self, algorithm: Algorithm, 
                 sizes: Union[List[int], int], 
                 chunk_size: Optional[int] = 16,
                 seed: int = 42,
@@ -218,7 +218,7 @@ class AlgoFeatureDataset(Dataset):
                 cache_dir: Union[str, Path] = None,
                 algo_kwargs: Dict = {}):
         super().__init__()
-        assert isinstance(algorithm, AlgorithmEnum), "algo must be an AlgorithmEnum"
+        assert isinstance(algorithm, Algorithm), "algo must be an AlgorithmEnum"
         if isinstance(sizes, int):
             sizes = [sizes]
 
@@ -368,7 +368,7 @@ class StackedAlgoFeatureDataset(Dataset):
 
 if __name__ == "__main__":
     from .utils import tree_map
-    dataset = AlgoFeatureDataset(algorithm=AlgorithmEnum.articulation_points, 
+    dataset = AlgoFeatureDataset(algorithm=Algorithm.articulation_points, 
                                         sizes=[4, 8, 12], 
                                         seed=42,
                                         chunk_size=8, 

@@ -34,7 +34,7 @@ class GraphFeatures:
                    graph_fts = torch.zeros((batch_size, hidden_dim), device=device))
     
 
-class Processor(nn.Module, metaclass=abc.ABCMeta):
+class ProcessorBase(nn.Module, metaclass=abc.ABCMeta):
     def __init__(self):
         super().__init__()
 

@@ -2,11 +2,11 @@ from typing import Optional, Tuple
 from torch import nn
 from torch import Tensor
 import torch
-from .base import Processor, GraphFeatures
+from .base import ProcessorBase, GraphFeatures
 import torch.nn.functional as F
 from ..utils import Linear, batch_mask, expand, POS_INF, NEG_INF
 
-class GAT(Processor):
+class GAT(ProcessorBase):
     """Graph Attention Network (Velickovic et al., ICLR 2018)."""
 
     def __init__(self,
@@ -130,7 +130,7 @@ class GATFull(GAT):
         return super().forward(graph_features, processor_state, num_nodes)
   
 
-class GATv2(Processor):
+class GATv2(ProcessorBase):
     """Graph Attention Network v2 (Brody et al., ICLR 2022)."""
 
     @property

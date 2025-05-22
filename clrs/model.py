@@ -4,9 +4,9 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 import torch.nn.functional as F
-from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output, OutputClass, AlgorithmEnum, Feature, NumNodes, NumSteps
+from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output, OutputClass, Algorithm, Feature, NumNodes, NumSteps
 from .utils import log_sinkhorn, Linear, batch_mask, expand, POS_INF, NEG_INF
-from .processors import GraphFeatures, Processor
+from .processors import GraphFeatures, ProcessorBase
 
 _USE_NUM_NODES_FOR_LOSS_AND_EVAL = True  # This is just used for testing. Keep it to True for all practical purposes.
 def set_use_num_nodes(use_num_nodes: bool):
@@ -906,7 +906,7 @@ class ModelState(NamedTuple):
 class AlgoModel(torch.nn.Module):
     def __init__(self, 
                  spec: Spec, 
-                 processor: Processor, 
+                 processor: ProcessorBase, 
                  hidden_dim: int, 
                  encode_hints: bool, 
                  decode_hints: bool,
@@ -1121,14 +1121,14 @@ class AlgoModel(torch.nn.Module):
         return (prediction, loss, evaluations), nxt_model_state.detach()
 
 
-DictFeature = Dict[AlgorithmEnum, Feature]
-DictTrajectory = Dict[AlgorithmEnum, Trajectory]
-DictModelState = Dict[AlgorithmEnum, ModelState]
+DictFeature = Dict[Algorithm, Feature]
+DictTrajectory = Dict[Algorithm, Trajectory]
+DictModelState = Dict[Algorithm, ModelState]
 
 class Model(torch.nn.Module):
     def __init__(self, 
                  specs: Dict[str, Spec], 
-                 processor: Processor, 
+                 processor: ProcessorBase, 
                  hidden_dim: int, 
                  encode_hints: bool = True, 
                  decode_hints: bool = True,
@@ -1157,7 +1157,7 @@ class Model(torch.nn.Module):
             self.models[algo_name] = model.compile()
 
 
-    def empty_model_state(self, algorithm: AlgorithmEnum, feature: Feature) -> ModelState:
+    def empty_model_state(self, algorithm: Algorithm, feature: Feature) -> ModelState:
         return self.models[algorithm].empty_model_state(feature)
         
     def forward(self, features: DictFeature, 

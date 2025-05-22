@@ -4,15 +4,15 @@ from collections import defaultdict
 from pytorch_lightning import seed_everything
 from clrs.processors.base import GraphFeatures
 from clrs.processors.pgn import Reduction
-from clrs.specs import AlgorithmEnum, Feature, Location, Stage, CLRS30Algorithms, Type
-from clrs.processors import ProcessorEnum
+from clrs.specs import Algorithm, Feature, Location, Stage, CLRS30Algorithms, Type
+from clrs.processors import Processor
 from clrs.model import Model, ReconstMode, get_steps_mask, POS_INF, NEG_INF
 from clrs.dataset_archive import get_dataset
 from clrs.utils import batch_mask, expand
 import clrs
 import clrs.utils
 
-def get_batches(algorithm: AlgorithmEnum, batch_size: int, size_small: int, size_large: int):
+def get_batches(algorithm: Algorithm, batch_size: int, size_small: int, size_large: int):
     ds1 = get_dataset(algos=algorithm,
                       sizes=[size_small],
                       num_samples=200,
@@ -252,7 +252,7 @@ def test_model_output(model: Model, b1: Feature, b2: Feature):
                 raise e
 
 
-def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_small: int, size_large: int):
+def test_static_batch(algorithm: Algorithm, processor: Processor, size_small: int, size_large: int):
     torch.set_printoptions(profile="full", precision=16)
     clrs.utils.set_bias_value(1.0)
     hidden_dim = 128
@@ -289,7 +289,7 @@ def test_static_batch(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_s
     clrs.utils.set_bias_value(0.0)
 
 
-def test_gradient_step(algorithm: AlgorithmEnum, processor: ProcessorEnum, size_small: int, size_large: int):
+def test_gradient_step(algorithm: Algorithm, processor: Processor, size_small: int, size_large: int):
     hidden_dim = 128
     batch_size = 32
     encode_hints = True
@@ -360,8 +360,8 @@ if __name__ == "__main__":
     # algorithms = [AlgorithmEnum.bfs]
     # algorithms = [AlgorithmEnum.bridges]
     # algorithms = [AlgorithmEnum.insertion_sort]
-    processors = list(ProcessorEnum)
-    processors = [ProcessorEnum.triplet_gmpnn]
+    processors = list(Processor)
+    processors = [Processor.triplet_gmpnn]
 
     for processor in processors:
         for algorithm in algorithms:

@@ -4,15 +4,15 @@ import hashlib
 import inspect
 import numpy as np
 from typing import Callable, Optional, Tuple, Union
-from .specs import RAW_SPECS, HAS_STATIC_HINT, Feature, Spec, CLRS30Algorithms, AlgorithmEnum
+from .specs import RAW_SPECS, HAS_STATIC_HINT, Feature, Spec, CLRS30Algorithms, Algorithm
 from .probing import ProbesDict
 from .sampler import SAMPLER_REGISTRY
 from . import algorithms
  
 
 
-class Algorithm(abc.ABC):
-    def __init__(self, name: Union[str, AlgorithmEnum], seed: int=42, 
+class AlgorithmSampler(abc.ABC):
+    def __init__(self, name: Union[str, Algorithm], seed: int=42, 
                  randomize_pos: bool=True, 
                  move_predh_to_input: bool=True, 
                  enforce_permutations: bool=True, 

@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import List, Optional
 from ..utils import Linear, batch_mask, expand, POS_INF, NEG_INF
-from .base import Processor, GraphFeatures
+from .base import ProcessorBase, GraphFeatures
 from torch import nn
 import torch
 from torch import Tensor
@@ -72,7 +72,7 @@ class TripletNN(nn.Module):
 
         return tri_msgs
 
-class PGN(Processor):
+class PGN(ProcessorBase):
     """
     Pointer Graph Network (Veličković et al., NeurIPS 2020) with optional
     triplet messages (Dudzik & Veličković, 2022).

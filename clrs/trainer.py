@@ -10,8 +10,8 @@ from torch.optim import Adam
 import torch
 from .utils import tree_map
 from .trainer_utils import CustomRichProgressBar, ModelCheckpointWithWandbSync
-from .specs import CLRS30Algorithms, AlgorithmEnum, Spec, Feature
-from .processors import ProcessorEnum
+from .specs import CLRS30Algorithms, Algorithm, Spec, Feature
+from .processors import Processor
 from .model import Model, ModelState, ReconstMode
 from .dataset import AlgoFeatureDataset, DictFeatureBatch, StackedAlgoFeatureDataset, CyclicAlgoFeatureDataset
 
@@ -21,7 +21,7 @@ class Split(str, Enum):
 
 @dataclass
 class TrainerConfig:
-    algorithms: Union[AlgorithmEnum, List[AlgorithmEnum]] = field(default_factory=lambda: CLRS30Algorithms)
+    algorithms: Union[Algorithm, List[Algorithm]] = field(default_factory=lambda: CLRS30Algorithms)
     sizes: List[int] = field(default_factory=lambda: [4, 7, 11, 13, 16])  # Training sizes, max size is used for validation
     train_batches: int = 10000                              # Number of total training batches per algorithm
     val_batches: int = 10                                   # Number of validation batches per algorithm
@@ -56,7 +56,7 @@ class TrainerConfig:
         return {k: v for k, v in asdict(self).items() if not k.startswith("_")}
 
     def __post_init__(self):
-        if isinstance(self.algorithms, AlgorithmEnum):
+        if isinstance(self.algorithms, Algorithm):
             self.algorithms = [self.algorithms]
 
         if self.chunk_size is not None and self.chunk_size < 0:
@@ -83,7 +83,7 @@ class TrainerConfig:
 
             # As per the generalise algorithmic learner paper, we replace the max length with 5/4 of the max length for 
             # string matching algorithms for training. For validation, we use the max length.
-            if algorithm in [AlgorithmEnum.naive_string_matcher, AlgorithmEnum.kmp_matcher] and split == Split.TRAIN:
+            if algorithm in [Algorithm.naive_string_matcher, Algorithm.kmp_matcher] and split == Split.TRAIN:
                 max_length = max(algo_sizes)
                 max_length = (max_length * 5) // 4
                 algo_sizes = [max_length]*len(algo_sizes)
@@ -102,7 +102,7 @@ class TrainerConfig:
         return dataset.get_dataloader(num_workers=num_workers)
         
     
-    def get_model(self, specs: Dict[AlgorithmEnum, Spec]):
+    def get_model(self, specs: Dict[Algorithm, Spec]):
         processors_kwargs = {
             "hidden_dim": self.hidden_dim, 
             "use_ln": self.use_ln, 
@@ -112,10 +112,10 @@ class TrainerConfig:
         }
         if len(self.algorithms) == 1:
             # Paper uses triplet GMPNN for single algorithm training
-            processor = ProcessorEnum.triplet_gmpnn(**processors_kwargs)
+            processor = Processor.triplet_gmpnn(**processors_kwargs)
         else:
             # Paper uses triplet MPNN for multi-algorithm training
-            processor = ProcessorEnum.triplet_mpnn(**processors_kwargs)
+            processor = Processor.triplet_mpnn(**processors_kwargs)
 
         model = Model(specs=specs,
                       processor=processor,
@@ -183,7 +183,7 @@ class TrainingModel(pl.LightningModule):
         self.log_dict(total_metrics, on_step=on_step, on_epoch=on_epoch, batch_size=batch_size, prog_bar=True)
         return total_loss
     
-    def get_model_state(self, split: Split, is_first: Dict[AlgorithmEnum, bool], features: Dict[AlgorithmEnum, Feature]):
+    def get_model_state(self, split: Split, is_first: Dict[Algorithm, bool], features: Dict[Algorithm, Feature]):
         new_model_state = {}
         prev_model_state = self.train_model_state if split == Split.TRAIN else self.val_model_state
         for algo, batch_is_first in is_first.items():
@@ -194,7 +194,7 @@ class TrainingModel(pl.LightningModule):
                 new_model_state[algo] = prev_model_state[algo]
         return new_model_state
     
-    def set_model_state(self, split: Split, is_last: Dict[AlgorithmEnum, bool], model_state: Dict[AlgorithmEnum, ModelState]):
+    def set_model_state(self, split: Split, is_last: Dict[Algorithm, bool], model_state: Dict[Algorithm, ModelState]):
         prev_model_state = self.train_model_state if split == Split.TRAIN else self.val_model_state
         for algo, batch_is_last in is_last.items():
             if batch_is_last:

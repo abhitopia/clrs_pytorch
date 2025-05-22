@@ -4,7 +4,7 @@ import torch
 from pathlib import Path
 from typing import List, Optional
 import typer
-from clrs.specs import AlgorithmEnum, CLRS30Algorithms
+from clrs.specs import Algorithm, CLRS30Algorithms
 from clrs.trainer import TrainerConfig, train
 import logging
 from rich import print
@@ -23,7 +23,7 @@ app = typer.Typer(
 
 @app.command("train")
 def main(
-    algos: List[AlgorithmEnum] = typer.Option(CLRS30Algorithms, "--algos", "-a", help="Algorithms to train", ),
+    algos: List[Algorithm] = typer.Option(CLRS30Algorithms, "--algos", "-a", help="Algorithms to train", ),
     sizes: List[int] = typer.Option([4, 7, 11, 13, 16], "--sizes", "-s", help="Sizes to train, max value is used for validation"),
     batch_size: int = typer.Option(32, "--batch-size", "-b", help="Batch size"),
     total_train_batches: int = typer.Option(10000, "--num-train-batches", "-t", help="Total training batches"),

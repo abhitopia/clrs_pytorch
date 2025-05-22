@@ -1,10 +1,10 @@
-from .base import Processor, GraphFeatures
+from .base import ProcessorBase, GraphFeatures
 from .gat import GAT, GATFull, GATv2, GATv2Full
 from .pgn import PGN, PGNMask, DeepSets, MPNN, Reduction
 from enum import Enum
 from typing import Optional
 
-class ProcessorEnum(str, Enum):
+class Processor(str, Enum):
     gat = "gat"
     gat_full = "gat_full"
     gat_v2 = "gat_v2"
@@ -29,7 +29,7 @@ class ProcessorEnum(str, Enum):
                  nb_heads: Optional[int] = 1, 
                  triplet_fts_size: Optional[int] = 8,
                  reduction: Reduction = Reduction.MAX,
-                 mp_steps: int = 1) -> Processor:
+                 mp_steps: int = 1) -> ProcessorBase:
         common_kwargs = {
             "node_feat_size": hidden_dim,
             "hidden_size": hidden_dim,
@@ -40,91 +40,91 @@ class ProcessorEnum(str, Enum):
             "msgs_mlp_sizes": [hidden_dim, hidden_dim],
             "triplet_feature_size": triplet_fts_size,
         }
-        if self == ProcessorEnum.gat:
+        if self == Processor.gat:
             return GAT(**common_kwargs,
                        nb_heads=nb_heads)
-        elif self == ProcessorEnum.gat_full:
+        elif self == Processor.gat_full:
             return GATFull(**common_kwargs,
                             nb_heads=nb_heads)
-        elif self == ProcessorEnum.gat_v2:
+        elif self == Processor.gat_v2:
             return GATv2(**common_kwargs,
                          nb_heads=nb_heads)
-        elif self == ProcessorEnum.gat_v2_full:
+        elif self == Processor.gat_v2_full:
             return GATv2Full(**common_kwargs,
                              nb_heads=nb_heads)
-        elif self == ProcessorEnum.deepsets:
+        elif self == Processor.deepsets:
             return DeepSets(**common_kwargs,
                             **pgn_common_kwargs,
                             reduction=reduction,
                             use_triplets=False,
                             gated=False)
-        elif self == ProcessorEnum.mpnn:
+        elif self == Processor.mpnn:
             return MPNN(**common_kwargs,
                         **pgn_common_kwargs,
                         reduction=reduction,
                         use_triplets=False,
                         gated=False)
-        elif self == ProcessorEnum.pgn:
+        elif self == Processor.pgn:
             return PGN(**common_kwargs,
                        **pgn_common_kwargs,
                        reduction=reduction,
                        use_triplets=False,
                        gated=False)
-        elif self == ProcessorEnum.pgn_mask:
+        elif self == Processor.pgn_mask:
             return PGNMask(**common_kwargs,
                             **pgn_common_kwargs,
                             reduction=reduction,
                             use_triplets=False,
                             gated=False)
-        elif self == ProcessorEnum.triplet_mpnn:
+        elif self == Processor.triplet_mpnn:
             return MPNN(**common_kwargs,
                         **pgn_common_kwargs,
                         reduction=reduction,
                         use_triplets=True,
                         gated=False)
-        elif self == ProcessorEnum.triplet_pgn:
+        elif self == Processor.triplet_pgn:
             return PGN(**common_kwargs,
                        **pgn_common_kwargs,
                        reduction=reduction,
                        use_triplets=True,
                        gated=False)
-        elif self == ProcessorEnum.triplet_pgn_mask:
+        elif self == Processor.triplet_pgn_mask:
             return PGNMask(**common_kwargs,
                             **pgn_common_kwargs,
                             reduction=reduction,
                             use_triplets=True,
                             gated=False)
-        elif self == ProcessorEnum.gpgn:
+        elif self == Processor.gpgn:
             return PGN(**common_kwargs,
                        **pgn_common_kwargs,
                        reduction=reduction,
                        use_triplets=False,
                        gated=True)
-        elif self == ProcessorEnum.gpgn_mask:
+        elif self == Processor.gpgn_mask:
             return PGNMask(**common_kwargs,
                             **pgn_common_kwargs,
                             reduction=reduction,
                             use_triplets=False,
                             gated=True)
-        elif self == ProcessorEnum.gmpnn:
+        elif self == Processor.gmpnn:
             return MPNN(**common_kwargs,
                         **pgn_common_kwargs,
                         reduction=reduction,
                         use_triplets=False,
                         gated=True)
-        elif self == ProcessorEnum.triplet_gpgn:
+        elif self == Processor.triplet_gpgn:
             return PGN(**common_kwargs,
                        **pgn_common_kwargs,
                        reduction=reduction,
                        use_triplets=True,
                        gated=True)
-        elif self == ProcessorEnum.triplet_gpgn_mask:
+        elif self == Processor.triplet_gpgn_mask:
             return PGNMask(**common_kwargs,
                            **pgn_common_kwargs,
                            reduction=reduction,
                            use_triplets=True,
                            gated=True)
-        elif self == ProcessorEnum.triplet_gmpnn:
+        elif self == Processor.triplet_gmpnn:
             return MPNN(**common_kwargs,
                         **pgn_common_kwargs,
                         reduction=reduction,
@@ -132,4 +132,4 @@ class ProcessorEnum(str, Enum):
                         gated=True)
         else:
             raise ValueError(f"Processor {self} not implemented")
-__all__ = ["Processor", "ProcessorEnum", "GraphFeatures"]
+__all__ = ["ProcessorBase", "Processor", "GraphFeatures"]

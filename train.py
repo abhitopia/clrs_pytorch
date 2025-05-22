@@ -15,12 +15,7 @@ os.environ['TORCHINDUCTOR_CACHE_DIR'] = str(Path(__file__).parent / "torch_compi
 
 def cache_dir() -> Path:
     current_file = Path(__file__)
-    if 'this_studio' in str(current_file) and 'teamspace' in str(current_file):
-        # Lightning Studio
-        return Path("/teamspace/uploads/clrs_cache")
-    else:
-        # Local
-        return Path("/tmp/clrs_cache")
+    return Path("/tmp/clrs_cache")
 
 app = typer.Typer(
     name="clrs",

@@ -898,6 +898,10 @@ class ModelState(NamedTuple):
     def empty(cls, batch_size: int, nb_nodes: int, hidden_dim: int, use_lstm: bool, device: torch.device = torch.device("cpu")) -> "ModelState":
         return cls(processor_state=torch.zeros((batch_size, nb_nodes, hidden_dim), device=device),
                    lstm_state=LSTMState.empty((batch_size * nb_nodes, hidden_dim), device=device) if use_lstm else None)
+    
+    def detach(self) -> "ModelState":
+        return ModelState(processor_state=self.processor_state.detach(),
+                          lstm_state=self.lstm_state.detach() if self.lstm_state is not None else None)
 
 class AlgoModel(torch.nn.Module):
     def __init__(self, 
@@ -1114,7 +1118,7 @@ class AlgoModel(torch.nn.Module):
         loss = self.loss(prediction=raw_prediction, target=target, steps=num_steps, num_nodes=num_nodes if _USE_NUM_NODES_FOR_LOSS_AND_EVAL else None)
         evaluations = self.evaluator(prediction=prediction, target=target, steps=num_steps, num_nodes=num_nodes if _USE_NUM_NODES_FOR_LOSS_AND_EVAL else None)
 
-        return (prediction, loss, evaluations), nxt_model_state
+        return (prediction, loss, evaluations), nxt_model_state.detach()
 
 
 DictFeature = Dict[AlgorithmEnum, Feature]

@@ -14,6 +14,7 @@ Batch = Tuple[List[int], int, bool]
 IsLast = bool
 IsFirst = bool
 FeatureBatch = Tuple[Feature, IsFirst, IsLast]
+DictFeatureBatch = Tuple[Dict[AlgorithmEnum, FeatureBatch], Dict[AlgorithmEnum, IsFirst], Dict[AlgorithmEnum, IsLast]]
 
 
 def sample_features(algo: Algorithm, num_samples: int, cache_dir: Union[str, Path] = None, verbose: bool = True) -> List[Feature]:
@@ -307,7 +308,7 @@ class CyclicAlgoFeatureDataset(Dataset):
     def specs(self):
         return {ds.algorithm: ds.spec for ds in self.datasets}
 
-    def __getitem__(self, idx: int) -> Dict[AlgorithmEnum, FeatureBatch]:
+    def __getitem__(self, idx: int) -> DictFeatureBatch:
         if idx >= len(self):
             raise IndexError(f"Index {idx} out of range for size {len(self)}")
         
@@ -316,8 +317,8 @@ class CyclicAlgoFeatureDataset(Dataset):
         offset_idx = idx // len(self.datasets)
 
         ds = self.datasets[dataset_idx]
-        feature_batch = ds[offset_idx]
-        return {ds.algorithm: feature_batch}
+        feature_batch, is_first, is_last = ds[offset_idx]
+        return {ds.algorithm: feature_batch}, {ds.algorithm: is_first}, {ds.algorithm: is_last}
     
     def __len__(self):
         return len(self.datasets[0]) * len(self.datasets)
@@ -344,13 +345,13 @@ class StackedAlgoFeatureDataset(Dataset):
     def specs(self):
         return {ds.algorithm: ds.spec for ds in self.datasets.values()}
 
-    def __getitem__(self, idx: int) -> Dict[AlgorithmEnum, FeatureBatch]:
+    def __getitem__(self, idx: int) -> DictFeatureBatch:
         if idx >= len(self):
             raise IndexError(f"Index {idx} out of range for size {len(self)}")
-        result = {}
+        feature_batch, is_first, is_last = {}, {}, {}
         for algo, dataset in self.datasets.items():
-            result[algo] = dataset[idx]
-        return result
+            feature_batch[algo], is_first[algo], is_last[algo] = dataset[idx]
+        return feature_batch, is_first, is_last
     
     def __len__(self):
         return self._num_batches

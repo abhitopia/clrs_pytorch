@@ -3,17 +3,17 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from torch.optim import Adam
 import torch
 from .utils import tree_map
-from .trainer_utils import CustomRichProgressBar, normalize_state_dict, ModelCheckpointWithWandbSync
-from .specs import CLRS30Algorithms, AlgorithmEnum, Spec
+from .trainer_utils import CustomRichProgressBar, ModelCheckpointWithWandbSync
+from .specs import CLRS30Algorithms, AlgorithmEnum, Spec, Feature
 from .processors import ProcessorEnum
-from .model import Model, ReconstMode
-from .dataset import AlgoFeatureDataset, StackedAlgoFeatureDataset, CyclicAlgoFeatureDataset, FeatureBatch
+from .model import Model, ModelState, ReconstMode
+from .dataset import AlgoFeatureDataset, DictFeatureBatch, StackedAlgoFeatureDataset, CyclicAlgoFeatureDataset
 
 class Split(str, Enum):
     TRAIN = "train"
@@ -146,14 +146,16 @@ class TrainingModel(pl.LightningModule):
         self.save_hyperparameters(config.to_dict(), ignore=["model", "config", "compile", "specs"])
         self.examples_seen = defaultdict(int)
         self.steps_done = defaultdict(int)
+        self.train_model_state = {algo: None for algo in self.model.specs.keys()}
+        self.val_model_state = {algo: None for algo in self.model.specs.keys()}
 
-    def log_metrics(self, evaluations, losses, phase: str):
+    def log_metrics(self, split: Split, evaluations, losses):
         total_loss, scores = 0.0, []
         algo_metrics, total_metrics = {}, {}
         batch_size = self.config.batch_size
 
         for algo in evaluations.keys():
-            if phase == "train":
+            if split == Split.TRAIN:
                 self.examples_seen[algo] += batch_size
                 self.steps_done[algo] += 1
                 # algo_metrics[f"{algo}/examples_seen"] = self.examples_seen[algo]
@@ -165,42 +167,57 @@ class TrainingModel(pl.LightningModule):
             loss_algo = sum(flat_losses)
             total_loss = total_loss + loss_algo
             score_algo = (sum(flat_evals)/len(flat_evals)).detach().cpu().item()
-            algo_metrics[f"{algo}/loss_{phase}"] = loss_algo.detach().cpu().item()
-            algo_metrics[f"{algo}/score_{phase}"] = score_algo
+            algo_metrics[f"{algo}/loss_{split}"] = loss_algo.detach().cpu().item()
+            algo_metrics[f"{algo}/score_{split}"] = score_algo
             scores.append(score_algo)
 
-        total_metrics[f"total/loss_{phase}"] = total_loss.detach().cpu().item()
-        total_metrics[f"total/score_{phase}"] = sum(scores)/len(scores)
+        total_metrics[f"total/loss_{split}"] = total_loss.detach().cpu().item()
+        total_metrics[f"total/score_{split}"] = sum(scores)/len(scores)
 
-        if phase == "train":
+        if split == Split.TRAIN:
             total_metrics[f"total/examples_seen"] = sum(self.examples_seen.values())
 
-        on_step = True if phase == "train" else False
-        on_epoch = True if phase != "train" else False
+        on_step = True if split == Split.TRAIN else False
+        on_epoch = True if split != Split.TRAIN else False
         self.log_dict(algo_metrics, on_step=on_step, on_epoch=on_epoch, batch_size=batch_size)
         self.log_dict(total_metrics, on_step=on_step, on_epoch=on_epoch, batch_size=batch_size, prog_bar=True)
         return total_loss
+    
+    def get_model_state(self, split: Split, is_first: Dict[AlgorithmEnum, bool], features: Dict[AlgorithmEnum, Feature]):
+        new_model_state = {}
+        prev_model_state = self.train_model_state if split == Split.TRAIN else self.val_model_state
+        for algo, batch_is_first in is_first.items():
+            if batch_is_first:
+                assert prev_model_state[algo] is None
+                new_model_state[algo] = self.model.empty_model_state(algo, features[algo])
+            else:
+                new_model_state[algo] = prev_model_state[algo]
+        return new_model_state
+    
+    def set_model_state(self, split: Split, is_last: Dict[AlgorithmEnum, bool], model_state: Dict[AlgorithmEnum, ModelState]):
+        prev_model_state = self.train_model_state if split == Split.TRAIN else self.val_model_state
+        for algo, batch_is_last in is_last.items():
+            if batch_is_last:
+                prev_model_state[algo] = None
+            else:
+                prev_model_state[algo] = model_state[algo]
 
-    def training_step(self, batch: Dict[AlgorithmEnum, FeatureBatch], batch_idx: int):
-        # import ipdb; ipdb.set_trace()
-
-        is_first = {algo: is_first for algo, (_, is_first, _) in batch.items()}
-        is_last = {algo: is_last for algo, (_, _, is_last) in batch.items()}
-        features = {algo: feature for algo, (feature, _, _) in batch.items()}
-
+    def training_step(self, batch: DictFeatureBatch, batch_idx: int):
+        features, is_first, is_last = batch
+        model_state = self.get_model_state(Split.TRAIN, is_first, features)
         torch.compiler.cudagraph_mark_step_begin()
-        (predictions, losses, evaluations), nxt_model_state = self.model(features)
-        total_loss = self.log_metrics(evaluations, losses, "train")
+        (predictions, losses, evaluations), nxt_model_state = self.model(features, model_state)
+        self.set_model_state(Split.TRAIN, is_last, nxt_model_state)
+        total_loss = self.log_metrics(Split.TRAIN, evaluations, losses)
         return total_loss
 
-    def validation_step(self, batch: Dict[AlgorithmEnum, FeatureBatch], batch_idx: int):
-        # import ipdb; ipdb.set_trace()    
-        is_first = {algo: is_first for algo, (_, is_first, _) in batch.items()}
-        is_last = {algo: is_last for algo, (_, _, is_last) in batch.items()}
-        features = {algo: feature for algo, (feature, _, _) in batch.items()}
+    def validation_step(self, batch: DictFeatureBatch, batch_idx: int):
+        features, is_first, is_last = batch
+        model_state = self.get_model_state(Split.VAL, is_first, features)
         torch.compiler.cudagraph_mark_step_begin()
-        (predictions, losses, evaluations), nxt_model_state = self.model(features)
-        _ = self.log_metrics(evaluations, losses, "val")
+        (predictions, losses, evaluations), nxt_model_state = self.model(features, model_state)
+        self.set_model_state(Split.VAL, is_last, nxt_model_state)
+        _ = self.log_metrics(Split.VAL, evaluations, losses)
 
     def configure_optimizers(self):
         return Adam(self.model.parameters(), 

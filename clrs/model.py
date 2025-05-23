@@ -1058,7 +1058,7 @@ class AlgoModel(torch.nn.Module):
                           lstm_state=LSTMState.empty((batch_size * nb_nodes, self.hidden_dim), device=device) if self.use_lstm else None)
     
     # @torch.compiler.disable(recursive=True)
-    def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, num_steps: Tensor, model_state: ModelState, predict_output: bool) -> Tuple[Trajectory, Trajectory, ModelState]:
+    def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, num_steps: Tensor, model_state: ModelState) -> Tuple[Trajectory, Trajectory, ModelState]:
         max_steps = next(iter(hints.values())).shape[0]
          # Disable the loop as it makes the computational graph too large for torch.compile
         prediction: Trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}

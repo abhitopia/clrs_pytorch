@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, Optional, Tuple, NamedTuple
+from typing import Dict, List, Optional, Tuple, NamedTuple
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -534,14 +534,15 @@ class Decoder(nn.Module):
 
         return data
 
-    def decode(self, graph_features: GraphFeatures, num_nodes: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
+    def decode(self, graph_features: GraphFeatures, num_nodes: Optional[Tensor] = None) -> Tuple[Tensor, Optional[Tensor]]:
         if self.location == Location.NODE:
             raw_result = self.decode_node_fts(graph_features, num_nodes)
         elif self.location == Location.EDGE:
             raw_result = self.decode_edge_fts(graph_features, num_nodes)
         elif self.location == Location.GRAPH:
             raw_result = self.decode_graph_fts(graph_features, num_nodes)
-        return self.postprocess(raw_result, num_nodes),raw_result
+        return raw_result, self.postprocess(raw_result, num_nodes)
+
 
 class Evaluator(nn.Module):
     def __init__(self, type_: Type, stage: Stage):
@@ -685,7 +686,7 @@ class Evaluator(nn.Module):
         elif self.type_ == Type.POINTER:
             return self.eval_pointer(prediction, target, steps, num_nodes)
         else:
-            import ipdb; ipdb.set_trace()
+            # import ipdb; ipdb.set_trace()
             raise ValueError("Invalid type")
         
 class AlgoEvaluator(nn.Module):
@@ -722,43 +723,47 @@ class AlgoEvaluator(nn.Module):
                 assert dp[1] == Location.NODE
         return new_spec, skips
     
-    def replace_permutations_with_pointers(self, trajectory: Trajectory) -> Trajectory:
-        # Create a new dictionary for the output trajectory.
-        # This will hold copies of the inner dictionaries for each stage.
-        new_trajectory = {k: v.copy() for k, v in trajectory.items()}
-        output_data_to_modify = new_trajectory[Stage.OUTPUT]
+    def replace_permutations_with_pointers(self, outputs: Output) -> Output:
+        new_outputs = {k: v.copy() for k, v in outputs.items()}
+        dont_copy = set()
 
         for skipped in self.skip:
             mask_one_name = skipped
             perm_name = skipped.replace("_mask", "")
             
-            mask_one = output_data_to_modify.pop(mask_one_name)
-            perm = output_data_to_modify.pop(perm_name)
+            mask_one = outputs[mask_one_name].clone()
+            perm = outputs[perm_name].clone()
+
+            dont_copy.add(mask_one_name)
+            dont_copy.add(perm_name)
             
-            output_data_to_modify[perm_name] = torch.where(
+            new_outputs[perm_name] = torch.where(
                 mask_one > 0.5,
                 torch.arange(perm.size(-1), device=perm.device),
                 torch.argmax(perm, dim=-1)
             ).type_as(perm)
+
+        for name in outputs:
+            if name not in dont_copy:
+                new_outputs[name] = outputs[name].clone()
             
-        return new_trajectory
+        return new_outputs
 
-    def forward(self, prediction: Trajectory, target: Trajectory, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Trajectory:
-        evaluations = {stage: {} for stage in self.evaluators.keys()}
-
-        # We only do this, the there is actually a target in the batch
-        if len(self.skip) > 0 and len(target[Stage.OUTPUT]) > 0:
-            target = self.replace_permutations_with_pointers(target)
-            prediction = self.replace_permutations_with_pointers(prediction)
-        
-        # Because output, may or may not be present depending on the batch
-        for name in target[Stage.OUTPUT].keys():
-            evaluator = self.evaluators[Stage.OUTPUT][name]
-            evaluations[Stage.OUTPUT][name] = evaluator(prediction[Stage.OUTPUT][name], target[Stage.OUTPUT][name], steps, num_nodes)
-
+    def evaluate_hints(self, prediction: Hints, target: Hints, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Hints:
+        evaluations = {}
         if self.decode_hints:
             for name, evaluator in self.evaluators[Stage.HINT].items():
-                evaluations[Stage.HINT][name] = evaluator(prediction[Stage.HINT][name], target[Stage.HINT][name], steps, num_nodes)
+                evaluations[name] = evaluator(prediction[name], target[name], steps, num_nodes)
+        return evaluations
+    
+    def evaluate_output(self, prediction: Output, target: Output, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Output:
+        evaluations = {}
+        if len(self.skip) > 0:
+            prediction = self.replace_permutations_with_pointers(prediction)
+            target = self.replace_permutations_with_pointers(target)
+
+        for name, evaluator in self.evaluators[Stage.OUTPUT].items():
+            evaluations[name] = evaluator(prediction[name], target[name], steps, num_nodes)
         return evaluations
 
 class AlgoLoss(nn.Module):
@@ -777,19 +782,18 @@ class AlgoLoss(nn.Module):
                 self.loss[Stage.OUTPUT].add_module(name, Loss(type_, stage))
             elif stage == Stage.HINT and self.decode_hints:
                 self.loss[Stage.HINT].add_module(name, Loss(type_, stage))
-
-    def forward(self, prediction: Trajectory, target: Trajectory, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Trajectory:
-        losses = {Stage.OUTPUT: {}}
-
-        # Because output, may or may not be present depending on the batch
-        for name in target[Stage.OUTPUT].keys():
-            loss = self.loss[Stage.OUTPUT][name]
-            losses[Stage.OUTPUT][name] = loss(prediction[Stage.OUTPUT][name], target[Stage.OUTPUT][name], steps, num_nodes)
-
+    
+    def hint_loss(self, prediction: Hints, target: Hints, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Hints:
+        losses = {}
         if self.decode_hints:
-            losses[Stage.HINT] = {}
             for name, loss in self.loss[Stage.HINT].items():
-                losses[Stage.HINT][name] = loss(prediction[Stage.HINT][name], target[Stage.HINT][name], steps, num_nodes)
+                losses[name] = loss(prediction[name], target[name], steps, num_nodes)
+        return losses
+
+    def output_loss(self, prediction: Output, target: Output, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Output:
+        losses = {}
+        for name, loss in self.loss[Stage.OUTPUT].items():
+            losses[name] = loss(prediction[name], target[name], steps, num_nodes)
         return losses
 
 class AlgoEncoder(nn.ModuleDict):
@@ -876,19 +880,23 @@ class AlgoDecoder(nn.ModuleDict):
                                        inf_bias=self.inf_bias,
                                        inf_bias_edge=self.inf_bias_edge)
                 self.decoders[Stage.HINT].add_module(name, decoder)
+    
 
-    def forward(self, graph_features: GraphFeatures, num_nodes: Optional[Tensor] = None) -> Tuple[Trajectory, Trajectory]:
-        trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
-        raw_trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
-        
-        for name, decoder in self.decoders[Stage.OUTPUT].items():
-            trajectory[Stage.OUTPUT][name], raw_trajectory[Stage.OUTPUT][name] = decoder.decode(graph_features, num_nodes)
-
+    def hints_decode(self, graph_features: GraphFeatures, num_nodes: Optional[Tensor] = None) -> Tuple[Hints, Hints]:
+        hints: Hints = {}
+        raw_hints: Hints = {}
         if self.decode_hints:
             for name, decoder in self.decoders[Stage.HINT].items():
-                trajectory[Stage.HINT][name], raw_trajectory[Stage.HINT][name] = decoder.decode(graph_features, num_nodes)
+                raw_hints[name], hints[name] = decoder.decode(graph_features, num_nodes)
+        return raw_hints, hints
+    
+    def output_decode(self, graph_features: GraphFeatures, num_nodes: Optional[Tensor] = None) -> Tuple[Output, Output]:
+        raw_output: Output = {}
+        output: Output = {}
+        for name, decoder in self.decoders[Stage.OUTPUT].items():
+            raw_output[name], output[name] = decoder.decode(graph_features, num_nodes)
+        return raw_output, output
 
-        return trajectory, raw_trajectory
 
 
 class ModelState(NamedTuple):
@@ -973,7 +981,8 @@ class AlgoModel(torch.nn.Module):
              step_hint: Hints, 
              num_nodes: NumNodes, 
              model_state: ModelState,
-             ) -> Tuple[Output, Hints, ModelState]:
+             predict_output: bool,
+             ) -> Tuple[Trajectory, Trajectory, ModelState]:
         
         graph_features: GraphFeatures = self.encoder(input, step_hint, num_nodes)
 
@@ -998,9 +1007,12 @@ class AlgoModel(torch.nn.Module):
                                            edge_fts=edge_fts_decoder, 
                                            graph_fts=graph_features.graph_fts)
         
-        prediction_step, raw_prediction_step = self.decoder(graph_features_decoder, num_nodes=num_nodes)
+        raw_predicted_hints, predicted_hints = self.decoder.hints_decode(graph_features_decoder, num_nodes=num_nodes)
+        raw_predicted_output, predicted_output = self.decoder.output_decode(graph_features_decoder, num_nodes=num_nodes) if predict_output else ({}, {})
 
-        return prediction_step, raw_prediction_step, nxt_model_state
+        prediction = {Stage.HINT: predicted_hints, Stage.OUTPUT: predicted_output}
+        raw_prediction = {Stage.HINT: raw_predicted_hints, Stage.OUTPUT: raw_predicted_output}
+        return raw_prediction, prediction, nxt_model_state
     
     @staticmethod
     def get_hint_at_step(hints: Hints, start_step: int, end_step: Optional[int] = None) -> Hints:
@@ -1018,6 +1030,17 @@ class AlgoModel(torch.nn.Module):
                 hint_k_data = torch.cat([hints[k], hint_k_data], dim=0)
             hints[k] = hint_k_data
         return hints
+    
+    @staticmethod
+    def stack_step_hints(step_hints: List[Hints]) -> Hints:
+        new_step_hints = {}
+        for key in step_hints[0]:
+            data = []
+            for i in range(len(step_hints)):
+                data.append(step_hints[i][key])
+            new_step_hints[key] = torch.stack(data, dim=0)
+        return new_step_hints
+
 
     def teacher_force(self, orig_hints: Hints, predicted_hints: Hints) -> Hints:
         if len(predicted_hints) == 0 or self.hint_teacher_forcing == 1.0:
@@ -1058,68 +1081,94 @@ class AlgoModel(torch.nn.Module):
                           lstm_state=LSTMState.empty((batch_size * nb_nodes, self.hidden_dim), device=device) if self.use_lstm else None)
     
     # @torch.compiler.disable(recursive=True)
-    def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, num_steps: Tensor, model_state: ModelState) -> Tuple[Trajectory, Trajectory, ModelState]:
+    def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, num_steps: Tensor, model_state: ModelState, predict_output: bool) -> Tuple[Trajectory, Trajectory, ModelState]:
         max_steps = next(iter(hints.values())).shape[0]
          # Disable the loop as it makes the computational graph too large for torch.compile
-        prediction: Trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
-        raw_prediction: Trajectory = {Stage.OUTPUT: {}, Stage.HINT: {}}
+
+        # Hints
+        predicted_hints: List[Hints] = []
+        raw_predicted_hints: List[Hints] = []
+
+        # Output
+        predicted_output: Output = {}
+        raw_predicted_output: Output = {}
+
+        last_predicted_hints: Hints = {}
         for step_idx in range(max_steps):
             orig_hints_at_step = self.get_hint_at_step(hints, step_idx)
-            predicted_hints_at_step = self.get_hint_at_step(prediction[Stage.HINT], step_idx-1) 
-            hints_at_step = self.teacher_force(orig_hints_at_step, predicted_hints_at_step)
-            
-            prediction_step, raw_prediction_step, model_state = self.step(
-                input=input,
-                step_hint=hints_at_step,
-                num_nodes=num_nodes,
-                model_state=model_state,          
-            )
+            hints_at_step = self.teacher_force(orig_hints_at_step, last_predicted_hints)
+            last_raw_predictions, last_predictions, model_state = self.step(
+                                                                            input=input,
+                                                                            step_hint=hints_at_step,
+                                                                            num_nodes=num_nodes,
+                                                                            model_state=model_state,          
+                                                                            predict_output=predict_output
+                                                                        )
 
-            not_done_mask = num_steps > (step_idx + 1)
-            prediction[Stage.HINT] = self.append_step_hints(prediction[Stage.HINT], prediction_step[Stage.HINT])
-            prediction[Stage.OUTPUT] = self.merge_predicted_output(output=prediction[Stage.OUTPUT], 
-                                                        predicted_output=prediction_step[Stage.OUTPUT], 
+            predicted_hints.append(last_predictions[Stage.HINT])
+            raw_predicted_hints.append(last_raw_predictions[Stage.HINT])
+
+            if predict_output:
+                not_done_mask = num_steps > (step_idx + 1)
+                predicted_output = self.merge_predicted_output(output=predicted_output, 
+                                                            predicted_output=last_predictions[Stage.OUTPUT], 
+                                                            not_done_mask=not_done_mask)
+                raw_predicted_output = self.merge_predicted_output(output=raw_predicted_output, 
+                                                        predicted_output=last_raw_predictions[Stage.OUTPUT], 
                                                         not_done_mask=not_done_mask)
-            raw_prediction[Stage.HINT] = self.append_step_hints(raw_prediction[Stage.HINT], raw_prediction_step[Stage.HINT])
-            raw_prediction[Stage.OUTPUT] = self.merge_predicted_output(output=raw_prediction[Stage.OUTPUT], 
-                                                    predicted_output=raw_prediction_step[Stage.OUTPUT], 
-                                                    not_done_mask=not_done_mask)
+
+        raw_predictions = {
+            Stage.HINT: self.stack_step_hints(raw_predicted_hints),
+            Stage.OUTPUT: raw_predicted_output
+        }
+        predictions = {
+            Stage.HINT: self.stack_step_hints(predicted_hints),
+            Stage.OUTPUT: predicted_output
+        }
             
-        return prediction, raw_prediction, model_state
+        return raw_predictions, predictions, model_state
 
 
     def forward(self, feature: Feature, model_state: Optional[ModelState] = None) -> Tuple[Tuple[Trajectory, Trajectory, Trajectory], ModelState]:
         trajectory, num_steps, num_nodes = feature[0], feature[1], feature[2]
         input, hints, output = trajectory[Stage.INPUT], trajectory[Stage.HINT], trajectory[Stage.OUTPUT]
         max_steps = next(iter(hints.values())).shape[0]
+        has_output = len(output) > 0
 
         prev_model_state = self.empty_model_state(feature) if model_state is None else model_state
-        prediction, raw_prediction, nxt_model_state = self._loop(input=input, 
-                                                                hints=hints, 
-                                                                num_nodes=num_nodes, 
-                                                                num_steps=num_steps,
-                                                                model_state=prev_model_state)
-      
+        raw_predictions, predictions, nxt_model_state = self._loop(input=input, 
+                                                                    hints=hints, 
+                                                                    num_nodes=num_nodes, 
+                                                                    num_steps=num_steps,
+                                                                    model_state=prev_model_state,
+                                                                    predict_output=has_output)
         # first target hint is never predicted
         # predicted hints are shifted by one step, and the first predicted hint is actually second target hint
-        target = {
-            Stage.OUTPUT: output,
-            Stage.HINT: self.get_hint_at_step(hints, start_step=1, end_step=max_steps)
-        }
-        raw_prediction = {
-            Stage.OUTPUT: raw_prediction[Stage.OUTPUT],
-            Stage.HINT: self.get_hint_at_step(raw_prediction[Stage.HINT], start_step=0, end_step=max_steps-1)
-        }
-        prediction = {
-            Stage.OUTPUT: prediction[Stage.OUTPUT],
-            Stage.HINT: self.get_hint_at_step(prediction[Stage.HINT], start_step=1, end_step=max_steps)
+        target_hints = self.get_hint_at_step(hints, start_step=1, end_step=max_steps)
+        raw_predictions[Stage.HINT] = self.get_hint_at_step(raw_predictions[Stage.HINT], start_step=0, end_step=max_steps-1)
+        predictions[Stage.HINT] = self.get_hint_at_step(predictions[Stage.HINT], start_step=0, end_step=max_steps-1)
+
+        hint_loss = self.loss.hint_loss(prediction=raw_predictions[Stage.HINT], target=target_hints, steps=num_steps, num_nodes=num_nodes)
+        hint_evaluations = self.evaluator.evaluate_hints(prediction=predictions[Stage.HINT], target=target_hints, steps=num_steps, num_nodes=num_nodes)
+        
+        if has_output:
+            output_loss = self.loss.output_loss(prediction=raw_predictions[Stage.OUTPUT], target=output, steps=num_steps, num_nodes=num_nodes)
+            output_evaluations = self.evaluator.evaluate_output(prediction=predictions[Stage.OUTPUT], target=output, steps=num_steps, num_nodes=num_nodes)
+        else:
+            output_loss = {}
+            output_evaluations = {}
+
+        losses = {
+            Stage.HINT: hint_loss,
+            Stage.OUTPUT: output_loss
         }
 
-        # print("Use num nodes for loss and eval", _USE_NUM_NODES_FOR_LOSS_AND_EVAL)
-        loss = self.loss(prediction=raw_prediction, target=target, steps=num_steps, num_nodes=num_nodes if _USE_NUM_NODES_FOR_LOSS_AND_EVAL else None)
-        evaluations = self.evaluator(prediction=prediction, target=target, steps=num_steps, num_nodes=num_nodes if _USE_NUM_NODES_FOR_LOSS_AND_EVAL else None)
+        evaluations = {
+            Stage.HINT: hint_evaluations,
+            Stage.OUTPUT: output_evaluations
+        }
 
-        return (prediction, loss, evaluations), nxt_model_state.detach()
+        return (predictions, losses, evaluations), nxt_model_state.detach()
 
 
 DictFeature = Dict[Algorithm, Feature]

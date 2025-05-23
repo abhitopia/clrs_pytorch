@@ -746,9 +746,10 @@ class AlgoEvaluator(nn.Module):
     def forward(self, prediction: Trajectory, target: Trajectory, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Trajectory:
         evaluations = {stage: {} for stage in self.evaluators.keys()}
 
-        if len(self.skip) > 0:
-            prediction = self.replace_permutations_with_pointers(prediction)
+        # We only do this, the there is actually a target in the batch
+        if len(self.skip) > 0 and len(target[Stage.OUTPUT]) > 0:
             target = self.replace_permutations_with_pointers(target)
+            prediction = self.replace_permutations_with_pointers(prediction)
         
         # Because output, may or may not be present depending on the batch
         for name in target[Stage.OUTPUT].keys():

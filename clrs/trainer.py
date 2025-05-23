@@ -204,8 +204,12 @@ class TrainingModel(pl.LightningModule):
             else:
                 prev_model_state[algo] = model_state[algo]
 
-    def training_step(self, batch: DictFeatureBatch, batch_idx: int):
+
+    def on_train_batch_start(self, batch, batch_idx, unused_optimizers=None):
+        # PyTorch now knows: “this is the start of my CUDA‐graph’d step”
         torch.compiler.cudagraph_mark_step_begin()
+
+    def training_step(self, batch: DictFeatureBatch, batch_idx: int):
         features, is_first, is_last = batch
         model_state = self.get_model_state(Split.TRAIN, is_first, features)
         (predictions, losses, evaluations), nxt_model_state = self.model(features, model_state)
@@ -213,8 +217,10 @@ class TrainingModel(pl.LightningModule):
         total_loss = self.log_metrics(Split.TRAIN, evaluations, losses, is_first)
         return total_loss
 
-    def validation_step(self, batch: DictFeatureBatch, batch_idx: int):
+    def on_validation_batch_start(self, batch, batch_idx, dataloader_idx=0):
         torch.compiler.cudagraph_mark_step_begin()
+
+    def validation_step(self, batch: DictFeatureBatch, batch_idx: int):
         features, is_first, is_last = batch
         model_state = self.get_model_state(Split.VAL, is_first, features)
         (predictions, losses, evaluations), nxt_model_state = self.model(features, model_state)

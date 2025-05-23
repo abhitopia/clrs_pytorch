@@ -10,6 +10,17 @@ import logging
 from rich import print
 import warnings
 
+import torch._logging as torch_logging
+
+# Control the logging to help debug compilation issues
+# torch_logging.set_logs(
+#     # dynamo=logging.DEBUG,
+#     # inductor=logging.DEBUG,
+#     recompiles=True,
+#     guards=True,
+#     graph_breaks=True
+# )
+
 warnings.filterwarnings("ignore", module=r"torch\._inductor(\.|$)")
 warnings.filterwarnings("ignore", module=r"torch\.utils\._sympy\.")
 

@@ -1,6 +1,7 @@
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+import math
 import os
 from typing import Dict, List, Optional, Union
 import pytorch_lightning as pl
@@ -49,7 +50,7 @@ class TrainerConfig:
     mp_steps: int = 1                                        # Number of message passing steps of GNN per hint step
 
     # Monitoring Settings
-    val_check_interval: int = 500                            # Number of training steps between validation checks
+    val_check_interval: int = 1000                            # Number of training steps between validation checks
 
     def to_dict(self):
         return {k: v for k, v in asdict(self).items() if not k.startswith("_")}
@@ -67,6 +68,9 @@ class TrainerConfig:
             self.num_train_steps = self.train_batches * len(self.algorithms)
         else:
             self.num_train_steps = self.train_batches
+
+        # Proportionally scale the validation, up to 3000 steps
+        self.val_check_interval = min(int(math.ceil(self.val_check_interval / self.train_batches ) * self.num_train_steps), 3000)
 
     def get_dataloader(self, split: Split, num_workers: int = 0):
         seed = self.seed + (1 if split == Split.VAL else 0)

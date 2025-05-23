@@ -8,6 +8,9 @@ from clrs.specs import Algorithm, CLRS30Algorithms
 from clrs.trainer import TrainerConfig, train
 import logging
 from rich import print
+import warnings
+
+warnings.filterwarnings("ignore", module=r"torch\._inductor(\.|$)")
 
 # To prevent pesky inductor warnings
 logging.getLogger("torch._inductor").setLevel(logging.ERROR)

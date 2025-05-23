@@ -102,13 +102,13 @@ class Loss(nn.Module):
             if num_nodes is not None:
                 masked_target = masked_target * node_mask
                 target = target * node_mask
-            ce = masked_target * F.log_softmax(pred, -1)
+            ce = masked_target * F.log_softmax(pred, -1).type_as(pred)
             if num_nodes is not None:
                 ce = torch.nan_to_num(ce, nan=0.0)
             loss = -torch.sum(ce, dim=-1, keepdim=True)
             mask = torch.any(target == OutputClass.POSITIVE, dim=-1, keepdim=True).type_as(pred)
         elif self.type_ == Type.POINTER:
-            ce = target * F.log_softmax(pred, -1)
+            ce = target * F.log_softmax(pred, -1).type_as(pred)
             if num_nodes is not None:
                 node_mask = self.get_node_mask(num_nodes, pred)
                 # This is necessary to get rid of NaNs
@@ -505,12 +505,12 @@ class Decoder(nn.Module):
                 best = data.argmax(-1)
                 data = F.one_hot(best, data.shape[-1]).type_as(data)
             else:
-                data = F.softmax(data, dim=-1)
+                data = F.softmax(data, dim=-1).type_as(data)
         elif self.type_ == Type.POINTER:
             if hard:
                 data = F.one_hot(data.argmax(dim=-1).long(), data.shape[-1]).type_as(data)
             else:
-                data = F.softmax(data, dim=-1)
+                data = F.softmax(data, dim=-1).type_as(data)
         elif self.type_ == Type.PERMUTATION_POINTER:
             # Convert the matrix of logits to a doubly stochastic matrix.
             data = log_sinkhorn(
@@ -1118,6 +1118,7 @@ class AlgoModel(torch.nn.Module):
 
 
     def forward(self, feature: Feature, model_state: Optional[ModelState] = None) -> Tuple[Tuple[Trajectory, Trajectory, Trajectory], ModelState]:
+
         trajectory, num_steps, num_nodes = feature[0], feature[1], feature[2]
         input, hints, output = trajectory[Stage.INPUT], trajectory[Stage.HINT], trajectory[Stage.OUTPUT]
         max_steps = next(iter(hints.values())).shape[0]

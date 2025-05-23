@@ -128,11 +128,13 @@ def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool,
     assert x.ndim >= 2
     assert x.shape[-1] == x.shape[-2]
 
+    org_dtype = x.dtype
+
     NEG_INF_LOCAL = -1e9
 
     if add_noise:
         # Add standard Gumbel noise (see https://arxiv.org/abs/1802.08665)
-        noise = -torch.log(-torch.log(torch.rand_like(x) + 1e-12) + 1e-12)
+        noise = -torch.log(-torch.log(torch.rand_like(x) + 1e-12) + 1e-12).to(org_dtype)
         x = x + noise
 
     x = x / temperature    # Can't do in-place or pytorch gods will scream!
@@ -145,11 +147,11 @@ def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool,
         edge_mask = expand(batch_mask(num_nodes, x.size(-1), 2), x)
 
     for _ in range(steps):
-        x = torch.log_softmax(x, dim=-1)
+        x = torch.log_softmax(x, dim=-1).to(org_dtype)
         if num_nodes is not None:
             x = x.masked_fill(~edge_mask, NEG_INF_LOCAL)
     
-        x = torch.log_softmax(x, dim=-2)
+        x = torch.log_softmax(x, dim=-2).to(org_dtype)
         if num_nodes is not None:
             x = x.masked_fill(~edge_mask, NEG_INF_LOCAL)
 
@@ -217,7 +219,7 @@ def log_sinkhorn_jit(x: Tensor, steps: int, temperature: float, zero_diagonal: b
 
     if add_noise:
         # Add standard Gumbel noise (see https://arxiv.org/abs/1802.08665)
-        noise = -torch.log(-torch.log(torch.rand_like(x) + 1e-12) + 1e-12)
+        noise = -torch.log(-torch.log(torch.rand_like(x) + 1e-12) + 1e-12).type_as(x)
         x = x + noise
 
     x = x / temperature    # Can't do in-place or pytorch gods will scream!

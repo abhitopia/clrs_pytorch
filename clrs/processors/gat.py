@@ -60,6 +60,8 @@ class GAT(ProcessorBase):
         assert graph_features.edge_fts.shape == (B, N, N, D)
         assert graph_features.graph_fts.shape == (B, D)
 
+        org_dtype = graph_features.node_fts.dtype
+
         if processor_state is None:
             processor_state = torch.zeros(B, N, self.out_size, device=graph_features.node_fts.device)
 
@@ -95,7 +97,7 @@ class GAT(ProcessorBase):
             # # 3) for those entirely-invalid rows, fill logits with 0 instead of -inf
             # logits = torch.where(row_has_valid, logits, torch.zeros_like(logits))
 
-            att_coeff = torch.softmax(F.leaky_relu(logits) + bias_mat, dim=-1) # [B, H, N, N]
+            att_coeff = torch.softmax(F.leaky_relu(logits) + bias_mat, dim=-1).to(org_dtype) # [B, H, N, N]
 
             values = self.m(node_state) # [B, N, H*F]
             values = values.reshape(B, N, self.nb_heads, self.head_size) # [B, N, H, F]
@@ -201,6 +203,8 @@ class GATv2(ProcessorBase):
         assert graph_features.edge_fts.shape == (B, N, N, D)
         assert graph_features.graph_fts.shape == (B, D)
 
+        org_dtype = graph_features.node_fts.dtype
+
         if processor_state is None:
             processor_state = torch.zeros(B, N, self.hidden_size, device=graph_features.node_fts.device)
 
@@ -241,7 +245,7 @@ class GATv2(ProcessorBase):
             # 2) force all padded or non-existent edges to -inf
             logits = logits.masked_fill(~head_mask, NEG_INF)
 
-            coefs = torch.softmax(logits + bias_mat, dim=-1) * head_mask
+            coefs = torch.softmax(logits + bias_mat, dim=-1).to(org_dtype) * head_mask
             ret = torch.matmul(coefs, values)  # [B, H, N, F]
             ret = ret.permute(0, 2, 1, 3)  # [B, N, H, F]
             ret = ret.reshape(B, N, self.hidden_size) # [B, N, H*F] == [B, N, D]

@@ -905,12 +905,15 @@ class ModelState(NamedTuple):
 
     @classmethod
     def empty(cls, batch_size: int, nb_nodes: int, hidden_dim: int, use_lstm: bool, device: torch.device = torch.device("cpu")) -> "ModelState":
-        return cls(processor_state=torch.zeros((batch_size, nb_nodes, hidden_dim), device=device),
-                   lstm_state=LSTMState.empty((batch_size * nb_nodes, hidden_dim), device=device) if use_lstm else None)
+        # Important to mark requires_grad=True to prevent recompilation on every step
+        return cls(processor_state=torch.zeros((batch_size, nb_nodes, hidden_dim), device=device, requires_grad=True),
+                   lstm_state=LSTMState.empty((batch_size * nb_nodes, hidden_dim), device=device, requires_grad=True) if use_lstm else None)
     
     def detach(self) -> "ModelState":
-        return ModelState(processor_state=self.processor_state.clone().detach(),
-                          lstm_state=self.lstm_state.clone().detach() if self.lstm_state is not None else None)
+        # Important to mark requires_grad=True after clone.detach() to prevent recompilation
+        return ModelState(processor_state=self.processor_state.clone().detach().requires_grad_(True),
+                          lstm_state=self.lstm_state.clone().detach().requires_grad_(True) if self.lstm_state is not None else None)
+
 
 class AlgoModel(torch.nn.Module):
     def __init__(self, 
@@ -950,7 +953,9 @@ class AlgoModel(torch.nn.Module):
         compilation_kwargs = {
             "fullgraph": True,
             "mode": "reduce-overhead",
-            "backend": "inductor"  # Changed back to inductor for better performance
+            # "dynamic": True,
+            # "backend": debug_backend  # Changed back to inductor for better performance
+            "backend": "inductor"
         }
         # self.loss = torch.compile(self.loss, **compilation_kwargs)
         # self.evaluator = torch.compile(self.evaluator, **compilation_kwargs)
@@ -981,7 +986,6 @@ class AlgoModel(torch.nn.Module):
              step_hint: Hints, 
              num_nodes: NumNodes, 
              model_state: ModelState,
-             predict_output: bool,
              ) -> Tuple[Trajectory, Trajectory, ModelState]:
         
         graph_features: GraphFeatures = self.encoder(input, step_hint, num_nodes)
@@ -1008,7 +1012,7 @@ class AlgoModel(torch.nn.Module):
                                            graph_fts=graph_features.graph_fts)
         
         raw_predicted_hints, predicted_hints = self.decoder.hints_decode(graph_features_decoder, num_nodes=num_nodes)
-        raw_predicted_output, predicted_output = self.decoder.output_decode(graph_features_decoder, num_nodes=num_nodes) if predict_output else ({}, {})
+        raw_predicted_output, predicted_output = self.decoder.output_decode(graph_features_decoder, num_nodes=num_nodes)
 
         prediction = {Stage.HINT: predicted_hints, Stage.OUTPUT: predicted_output}
         raw_prediction = {Stage.HINT: raw_predicted_hints, Stage.OUTPUT: raw_predicted_output}
@@ -1077,8 +1081,13 @@ class AlgoModel(torch.nn.Module):
         device = num_steps.device
         batch_size = num_steps.shape[0]
         nb_nodes = trajectory[Stage.INPUT]['pos'].shape[1]
-        return ModelState(processor_state=torch.zeros((batch_size, nb_nodes, self.hidden_dim), device=device),
-                          lstm_state=LSTMState.empty((batch_size * nb_nodes, self.hidden_dim), device=device) if self.use_lstm else None)
+        return ModelState.empty(
+            batch_size=batch_size,
+            nb_nodes=nb_nodes,
+            hidden_dim=self.hidden_dim,
+            use_lstm=self.use_lstm,
+            device=device
+        )
     
     # @torch.compiler.disable(recursive=True)
     def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, num_steps: Tensor, model_state: ModelState, predict_output: bool) -> Tuple[Trajectory, Trajectory, ModelState]:
@@ -1101,8 +1110,7 @@ class AlgoModel(torch.nn.Module):
                                                                             input=input,
                                                                             step_hint=hints_at_step,
                                                                             num_nodes=num_nodes,
-                                                                            model_state=model_state,          
-                                                                            predict_output=predict_output
+                                                                            model_state=model_state          
                                                                         )
 
             predicted_hints.append(last_predictions[Stage.HINT])

@@ -1,5 +1,6 @@
 from enum import Enum
-from typing import Dict, List, Optional, Tuple, NamedTuple
+import types
+from typing import Callable, Dict, List, Optional, Tuple, NamedTuple
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -948,25 +949,25 @@ class AlgoModel(torch.nn.Module):
         if self.use_lstm:
             self.lstm_cell = LSTMCell(self.hidden_dim, self.hidden_dim)
 
-    def compile(self):
-        torch._dynamo.config.cache_size_limit = 256
-        compilation_kwargs = {
-            "fullgraph": True,
-            "mode": "reduce-overhead",
-            # "dynamic": True,
-            # "backend": debug_backend  # Changed back to inductor for better performance
-            "backend": "inductor"
-        }
-        # self.loss = torch.compile(self.loss, **compilation_kwargs)
-        # self.evaluator = torch.compile(self.evaluator, **compilation_kwargs)
-        # self.step = torch.compile(self.step, **compilation_kwargs)
-        # self.teacher_force = torch.compile(self.teacher_force, **compilation_kwargs)
-        # self.merge_predicted_output = torch.compile(self.merge_predicted_output, **compilation_kwargs)
-        # return self
-        # self.get_hint_at_step = torch.compile(self.get_hint_at_step, **compilation_kwargs)
-        # self.append_step_hints = torch.compile(self.append_step_hints, **compilation_kwargs)
-        compiled_self = torch.compile(self, fullgraph=True, mode="reduce-overhead", backend="inductor")
-        return compiled_self
+    # def compile(self):
+    #     torch._dynamo.config.cache_size_limit = 256
+    #     compilation_kwargs = {
+    #         "fullgraph": True,
+    #         "mode": "reduce-overhead",
+    #         # "dynamic": True,
+    #         # "backend": debug_backend  # Changed back to inductor for better performance
+    #         "backend": "inductor"
+    #     }
+    #     # self.loss = torch.compile(self.loss, **compilation_kwargs)
+    #     # self.evaluator = torch.compile(self.evaluator, **compilation_kwargs)
+    #     # self.step = torch.compile(self.step, **compilation_kwargs)
+    #     # self.teacher_force = torch.compile(self.teacher_force, **compilation_kwargs)
+    #     # self.merge_predicted_output = torch.compile(self.merge_predicted_output, **compilation_kwargs)
+    #     # return self
+    #     # self.get_hint_at_step = torch.compile(self.get_hint_at_step, **compilation_kwargs)
+    #     # self.append_step_hints = torch.compile(self.append_step_hints, **compilation_kwargs)
+    #     compiled_self = torch.compile(self, fullgraph=True, mode="reduce-overhead", backend="inductor")
+    #     return compiled_self
 
     def apply_lstm(self, model_state: ModelState) -> ModelState:
         if self.use_lstm:
@@ -1203,10 +1204,15 @@ class Model(torch.nn.Module):
                                                             dropout=dropout))
             
     def compile(self):
-        for algo_name, model in self.models.items():
-            print(f"Compiling {algo_name}...")
-            self.models[algo_name] = model.compile()
-
+        for name, mod in self.models.items():
+            print(f"▸ compiling {name}…")
+            self.models[name] = torch.compile(
+                mod,
+                fullgraph=True,
+                mode="reduce-overhead",
+                backend="inductor",
+            )
+        return self
 
     def empty_model_state(self, algorithm: Algorithm, feature: Feature) -> ModelState:
         return self.models[algorithm].empty_model_state(feature)
@@ -1217,6 +1223,7 @@ class Model(torch.nn.Module):
         for algo, feature in features.items():
             if model_state is None or algo not in model_state:
                 model_state = {algo: self.empty_model_state(algo, feature)}
+
             (predictions[algo], losses[algo], evaluations[algo]), nxt_model_state[algo] = self.models[algo](feature, model_state[algo])
         return (predictions, losses, evaluations), nxt_model_state
 

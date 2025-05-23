@@ -9,7 +9,7 @@ torch._dynamo.config.verbose = True
 seed = 42
 num_batches = 100
 
-algorithms = [Algorithm.dfs]
+algorithms = [Algorithm.dfs, Algorithm.articulation_points]
 sizes = [16]
 
 chunk_size = 8
@@ -65,18 +65,14 @@ model = Model(specs=specs,
 model.compile()
 
 
-
-prev_model_state = {algo: None for algo, spec in specs.items()}
-
 def get_model_state(model, prev_model_state, is_first, features):
-    new_model_state = {}
     for algo, batch_is_first in is_first.items():
         if batch_is_first:
             assert prev_model_state[algo] is None
-            new_model_state[algo] = model.empty_model_state(algo, features[algo])
+            prev_model_state[algo] = model.empty_model_state(algo, features[algo])
         else:
-            new_model_state[algo] = prev_model_state[algo]
-    return new_model_state
+            prev_model_state[algo] = prev_model_state[algo]
+    return prev_model_state
  
 def set_model_state(prev_model_state, is_last, next_model_state):
     for algo, batch_is_last in is_last.items():
@@ -89,9 +85,8 @@ def set_model_state(prev_model_state, is_last, next_model_state):
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
+prev_model_state = {algo: None for algo, _ in specs.items()}
 for batch_idx, (feature, is_first, is_last) in enumerate(dl):
-    if batch_idx not in [0, 5, 6]:
-        continue
     print(f"Processing Batch {batch_idx} {is_first} {is_last}")
     optimizer.zero_grad()
     prev_model_state = get_model_state(model, prev_model_state, is_first, feature)

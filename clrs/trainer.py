@@ -10,7 +10,7 @@ from torch.optim import Adam
 import torch
 from .utils import tree_map
 from .trainer_utils import CustomRichProgressBar, ModelCheckpointWithWandbSync
-from .specs import CLRS30Algorithms, Algorithm, Spec, Feature
+from .specs import CLRS30Algorithms, Algorithm, Spec, Feature, Stage
 from .processors import Processor
 from .model import Model, ModelState, ReconstMode
 from .dataset import AlgoFeatureDataset, DictFeatureBatch, StackedAlgoFeatureDataset, CyclicAlgoFeatureDataset
@@ -151,7 +151,7 @@ class TrainingModel(pl.LightningModule):
         self.train_model_state = {algo: None for algo in self.model.specs.keys()}
         self.val_model_state = {algo: None for algo in self.model.specs.keys()}
 
-    def log_metrics(self, split: Split, evaluations, losses, is_first: Dict[Algorithm, bool]):
+    def log_metrics(self, split: Split, evaluations, losses, is_first: Dict[Algorithm, bool], is_last: Dict[Algorithm, bool]):
         total_loss, scores = 0.0, []
         algo_metrics, total_metrics = {}, {}
         batch_size = self.config.batch_size
@@ -162,13 +162,23 @@ class TrainingModel(pl.LightningModule):
                 self.batches_seen[algo] += 1
                 algo_metrics[f"{algo}/examples_seen"] = self.examples_seen[algo]
                 algo_metrics[f"{algo}/batches_seen"] = self.batches_seen[algo]
-            flat_evals, flat_losses = [], []
-            tree_map(lambda x: flat_evals.append(x), evaluations[algo])
-            tree_map(lambda x: flat_losses.append(x), losses[algo])
 
-            loss_algo = sum(flat_losses)
+            flat_hints_eval, flat_hints_loss = [], [] 
+
+            tree_map(lambda x: flat_hints_eval.append(x), evaluations[algo][Stage.HINT])
+            tree_map(lambda x: flat_hints_loss.append(x), losses[algo][Stage.HINT])
+            loss_algo = sum(flat_hints_loss)
+            score_algo = sum(flat_hints_eval).detach().cpu().item()/len(flat_hints_eval)
+
+
+            if is_last[algo]:
+                flat_outputs_eval, flat_outputs_loss = [], [] 
+                tree_map(lambda x: flat_outputs_eval.append(x), evaluations[algo][Stage.OUTPUT])
+                tree_map(lambda x: flat_outputs_loss.append(x), losses[algo][Stage.OUTPUT])
+                loss_algo = loss_algo + sum(flat_outputs_loss)
+                score_algo = (score_algo * len(flat_hints_eval) + sum(flat_outputs_eval).detach().cpu().item())/(len(flat_hints_eval) + len(flat_outputs_eval))
+
             total_loss = total_loss + loss_algo
-            score_algo = (sum(flat_evals)/len(flat_evals)).detach().cpu().item()
             algo_metrics[f"{algo}/loss_{split}"] = loss_algo.detach().cpu().item()
             algo_metrics[f"{algo}/score_{split}"] = score_algo
             scores.append(score_algo)
@@ -215,7 +225,7 @@ class TrainingModel(pl.LightningModule):
         model_state = self.get_model_state(Split.TRAIN, is_first, features)
         (predictions, losses, evaluations), nxt_model_state = self.model(features, model_state)
         self.set_model_state(Split.TRAIN, is_last, nxt_model_state)
-        total_loss = self.log_metrics(Split.TRAIN, evaluations, losses, is_first)
+        total_loss = self.log_metrics(Split.TRAIN, evaluations, losses, is_first, is_last)
         return total_loss
 
     # def on_validation_batch_start(self, batch, batch_idx, dataloader_idx=0):
@@ -226,7 +236,7 @@ class TrainingModel(pl.LightningModule):
         model_state = self.get_model_state(Split.VAL, is_first, features)
         (predictions, losses, evaluations), nxt_model_state = self.model(features, model_state)
         self.set_model_state(Split.VAL, is_last, nxt_model_state)
-        _ = self.log_metrics(Split.VAL, evaluations, losses, is_first)
+        _ = self.log_metrics(Split.VAL, evaluations, losses, is_first, is_last)
 
     def on_validation_epoch_end(self):
         # reset the model state for validation, this is to ensure that the model state is not carried over from one epoch to the next

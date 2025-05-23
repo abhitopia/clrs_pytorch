@@ -11,6 +11,7 @@ from rich import print
 import warnings
 
 warnings.filterwarnings("ignore", module=r"torch\._inductor(\.|$)")
+warnings.filterwarnings("ignore", module=r"torch\.utils\._sympy\.")
 
 # To prevent pesky inductor warnings
 logging.getLogger("torch._inductor").setLevel(logging.ERROR)

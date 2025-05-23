@@ -933,7 +933,7 @@ class AlgoModel(torch.nn.Module):
         self.decode_hints = decode_hints
         self.spec = spec
         self.hint_teacher_forcing = hint_teacher_forcing
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
         self.encoder = AlgoEncoder(spec, hidden_dim, encode_hints)
         self.processor = processor
         self.loss = AlgoLoss(spec=spec, decode_hints=decode_hints)
@@ -948,26 +948,6 @@ class AlgoModel(torch.nn.Module):
         self.use_lstm = use_lstm
         if self.use_lstm:
             self.lstm_cell = LSTMCell(self.hidden_dim, self.hidden_dim)
-
-    # def compile(self):
-    #     torch._dynamo.config.cache_size_limit = 256
-    #     compilation_kwargs = {
-    #         "fullgraph": True,
-    #         "mode": "reduce-overhead",
-    #         # "dynamic": True,
-    #         # "backend": debug_backend  # Changed back to inductor for better performance
-    #         "backend": "inductor"
-    #     }
-    #     # self.loss = torch.compile(self.loss, **compilation_kwargs)
-    #     # self.evaluator = torch.compile(self.evaluator, **compilation_kwargs)
-    #     # self.step = torch.compile(self.step, **compilation_kwargs)
-    #     # self.teacher_force = torch.compile(self.teacher_force, **compilation_kwargs)
-    #     # self.merge_predicted_output = torch.compile(self.merge_predicted_output, **compilation_kwargs)
-    #     # return self
-    #     # self.get_hint_at_step = torch.compile(self.get_hint_at_step, **compilation_kwargs)
-    #     # self.append_step_hints = torch.compile(self.append_step_hints, **compilation_kwargs)
-    #     compiled_self = torch.compile(self, fullgraph=True, mode="reduce-overhead", backend="inductor")
-    #     return compiled_self
 
     def apply_lstm(self, model_state: ModelState) -> ModelState:
         if self.use_lstm:
@@ -1204,11 +1184,18 @@ class Model(torch.nn.Module):
                                                             dropout=dropout))
             
     def compile(self):
+        #     torch._dynamo.config.cache_size_limit = 256
         for name, mod in self.models.items():
             print(f"▸ compiling {name}…")
+            fullgraph = True
+            spec = self.models[name].spec
+            if 'pred' in spec and spec['pred'][2] == Type.PERMUTATION_POINTER:
+                print(f"▸ disabling fullgraph for {name}…")
+                fullgraph = False
+
             self.models[name] = torch.compile(
                 mod,
-                fullgraph=True,
+                fullgraph=fullgraph,
                 mode="reduce-overhead",
                 backend="inductor",
             )

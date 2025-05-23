@@ -41,6 +41,7 @@ def main(
     stacked: bool = typer.Option(False, "--stacked", "-S", help="Stacked training", is_flag=True, flag_value=True),
     compile: bool = typer.Option(False, "--compile", "-C", help="Compile model", is_flag=True, flag_value=True),
     debug: bool = typer.Option(False, "--debug", "-D", help="Debug mode", is_flag=True, flag_value=True),
+    val_check_interval: int = typer.Option(10, "--val-check-interval", "-vci", help="Validation check interval"),
 ) -> None:
     
     if stacked:
@@ -63,6 +64,7 @@ def main(
         config=config,
         project_name=project_name,
         run_name=run_name,
+        val_check_interval=val_check_interval,
         checkpoint_dir=ckpt_dir,
         compile=compile,
         debug=debug

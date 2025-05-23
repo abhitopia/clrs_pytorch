@@ -109,9 +109,8 @@ class Linear(nn.Linear):
             super().reset_parameters()
 
 
-
-
-def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool, add_noise: bool = True, num_nodes: Optional[int] = None) -> Tensor:
+@torch.compiler.disable()
+def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool, add_noise: bool = True, num_nodes: Optional[Tensor] = None) -> Tensor:
     """Sinkhorn operator in log space, to postprocess permutation pointer logits.
 
     Args:
@@ -129,6 +128,93 @@ def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool,
     assert x.ndim >= 2
     assert x.shape[-1] == x.shape[-2]
 
+    NEG_INF_LOCAL = -1e9
+
+    if add_noise:
+        # Add standard Gumbel noise (see https://arxiv.org/abs/1802.08665)
+        noise = -torch.log(-torch.log(torch.rand_like(x) + 1e-12) + 1e-12)
+        x = x + noise
+
+    x = x / temperature    # Can't do in-place or pytorch gods will scream!
+
+    if zero_diagonal:
+        eye = torch.eye(x.shape[-1], device=x.device, dtype=torch.bool)
+        x = x.masked_fill(eye.unsqueeze(0), NEG_INF_LOCAL)
+
+    if num_nodes is not None:
+        edge_mask = expand(batch_mask(num_nodes, x.size(-1), 2), x)
+
+    for _ in range(steps):
+        x = torch.log_softmax(x, dim=-1)
+        if num_nodes is not None:
+            x = x.masked_fill(~edge_mask, NEG_INF_LOCAL)
+    
+        x = torch.log_softmax(x, dim=-2)
+        if num_nodes is not None:
+            x = x.masked_fill(~edge_mask, NEG_INF_LOCAL)
+
+    return x
+
+
+@torch.jit.script
+# JIT-friendly batch_mask for trailing_dims=2
+# valid_count: 1D tensor of shape (batch_size,)
+# max_count: maximum number of nodes (int)
+def batch_mask_two(
+    valid_count: Tensor,
+    max_count: int
+) -> Tensor:
+    """
+    Creates a broadcastable mask of shape (batch_size, max_count, max_count)
+    where mask[i,j,k] = (j < valid_count[i]) & (k < valid_count[i]).
+    This version is statically shaped for trailing_dims=2 to be
+    compatible with TorchScript.
+    """
+    # Ensure valid_count is 1D
+    if valid_count.dim() != 1:
+        raise ValueError("batch_mask_two: valid_count must be a 1D tensor")
+
+    batch_size = valid_count.size(0)
+    # Create arange tensor [0,1,...,max_count-1]
+    arange_nodes = torch.arange(max_count, device=valid_count.device)
+
+    # Reshape valid_count to (batch_size, 1, 1)
+    valid = valid_count.view(batch_size, 1, 1)
+
+    # Create two broadcastable views
+    view0 = arange_nodes.view(1, max_count, 1)
+    view1 = arange_nodes.view(1, 1, max_count)
+
+    # Compare and combine
+    mask0 = view0 < valid  # shape (batch_size, max_count, 1)
+    mask1 = view1 < valid  # shape (batch_size, 1, max_count)
+
+    # Broadcast to (batch_size, max_count, max_count)
+    return mask0 & mask1
+
+
+@torch.compiler.disable()
+@torch.jit.script
+def log_sinkhorn_jit(x: Tensor, steps: int, temperature: float, zero_diagonal: bool, add_noise: bool = True, num_nodes: Optional[Tensor] = None) -> Tensor:
+    """Sinkhorn operator in log space, to postprocess permutation pointer logits.
+
+    Args:
+        x: input of shape [..., n, n], a batch of square matrices.
+        steps: number of iterations.
+        temperature: temperature parameter (as temperature approaches zero, the
+        output approaches a permutation matrix).
+        zero_diagonal: whether to force the diagonal logits towards -inf.
+        add_noise: whether to add Gumbel noise.
+
+    Returns:
+        Elementwise logarithm of a doubly-stochastic matrix (a matrix with
+        non-negative elements whose rows and columns sum to 1).
+    """
+    assert x.ndim >= 2
+    assert x.shape[-1] == x.shape[-2]
+
+    NEG_INF_LOCAL = -1e9
+
     if add_noise:
         # Add standard Gumbel noise (see https://arxiv.org/abs/1802.08665)
         noise = -torch.log(-torch.log(torch.rand_like(x) + 1e-12) + 1e-12)
@@ -139,18 +225,24 @@ def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool,
 
     if zero_diagonal:
         eye = torch.eye(x.shape[-1], device=x.device, dtype=torch.bool)
-        x = x.masked_fill(eye.unsqueeze(0), NEG_INF)
+        x = x.masked_fill(eye.unsqueeze(0), NEG_INF_LOCAL)
+
+
+  
     if num_nodes is not None:
-        edge_mask = expand(batch_mask(num_nodes, x.size(-1), 2), x)
+        edge_mask = expand(batch_mask_two(num_nodes, x.size(-1)), x)
+    else:
+        # **always** define edge_mask as “no masking” by default
+        batch_size, n, _ = x.size()
+        edge_mask: Tensor = torch.ones(batch_size, n, n, dtype=torch.bool, device=x.device)
+
+
 
     for _ in range(steps):
         x = torch.log_softmax(x, dim=-1)
-        if num_nodes is not None:
-            x = x.masked_fill(~edge_mask, NEG_INF)
-    
+        x = x.masked_fill(~edge_mask, NEG_INF_LOCAL)
         x = torch.log_softmax(x, dim=-2)
-        if num_nodes is not None:
-            x = x.masked_fill(~edge_mask, NEG_INF)
+        x = x.masked_fill(~edge_mask, NEG_INF_LOCAL)
 
     return x
 

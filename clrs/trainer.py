@@ -49,9 +49,6 @@ class TrainerConfig:
     nb_heads: int = 1                                        # Number of attention heads (if using GAT variant of GNN)
     mp_steps: int = 1                                        # Number of message passing steps of GNN per hint step
 
-    # Monitoring Settings
-    val_check_interval: int = 1000                            # Number of training steps between validation checks
-
     def to_dict(self):
         return {k: v for k, v in asdict(self).items() if not k.startswith("_")}
 
@@ -68,9 +65,6 @@ class TrainerConfig:
             self.num_train_steps = self.train_batches * len(self.algorithms)
         else:
             self.num_train_steps = self.train_batches
-
-        # Proportionally scale the validation, up to 3000 steps
-        self.val_check_interval = min(int(math.ceil(self.val_check_interval / self.train_batches ) * self.num_train_steps), 3000)
 
     def get_dataloader(self, split: Split, num_workers: int = 0):
         seed = self.seed + (1 if split == Split.VAL else 0)
@@ -203,7 +197,7 @@ class TrainingModel(pl.LightningModule):
                 assert prev_model_state[algo] is None
                 new_model_state[algo] = self.model.empty_model_state(algo, features[algo])
             else:
-                new_model_state[algo] = prev_model_state[algo]
+                new_model_state[algo] = prev_model_state[algo].detach()
         return new_model_state
     
     def set_model_state(self, split: Split, is_last: Dict[Algorithm, bool], model_state: Dict[Algorithm, ModelState]):
@@ -230,7 +224,9 @@ class TrainingModel(pl.LightningModule):
 
     # def on_validation_batch_start(self, batch, batch_idx, dataloader_idx=0):
     #     torch.compiler.cudagraph_mark_step_begin()
-
+    
+    # This is added to prevent triggering recompilation due to grad mode change
+    @torch.enable_grad()
     def validation_step(self, batch: DictFeatureBatch, batch_idx: int):
         features, is_first, is_last = batch
         model_state = self.get_model_state(Split.VAL, is_first, features)
@@ -255,6 +251,7 @@ def train(config: TrainerConfig,
           run_name: str = 'run_1',
           project_name: str = 'clrs', 
           checkpoint_dir: str = './checkpoints',
+          val_check_interval: int = 1000,
           wandb_logging: bool = True,
           debug: bool = False,
           compile: bool = False) -> None:
@@ -307,7 +304,7 @@ def train(config: TrainerConfig,
                 monitor='step',
                 mode='max',
                 save_top_k=2,
-                every_n_train_steps=config.val_check_interval,
+                every_n_train_steps=val_check_interval,
                 auto_insert_metric_name=False,
                 filename='last-step{step:07d}-Score:{total/score_val:.4f}-Loss:{total/loss_val:.4f}',
                 wandb_verbose=False
@@ -331,7 +328,7 @@ def train(config: TrainerConfig,
         limit_train_batches=None,
         limit_val_batches=None,
         check_val_every_n_epoch=None, # Turn off validation  per epoch
-        val_check_interval=config.val_check_interval,
+        val_check_interval=val_check_interval,
         enable_model_summary=True,
         # detect_anomaly=True
     )

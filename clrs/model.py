@@ -1186,13 +1186,13 @@ class Model(torch.nn.Module):
     def compile(self):
         #     torch._dynamo.config.cache_size_limit = 256
         for name, mod in self.models.items():
-            print(f"▸ compiling {name}…")
             fullgraph = True
             spec = self.models[name].spec
             if 'pred' in spec and spec['pred'][2] == Type.PERMUTATION_POINTER:
                 print(f"▸ disabling fullgraph for {name}…")
                 fullgraph = False
 
+            print(f"▸ compiling {name}…  with fullgraph={fullgraph}")
             self.models[name] = torch.compile(
                 mod,
                 fullgraph=fullgraph,

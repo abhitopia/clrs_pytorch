@@ -197,7 +197,7 @@ class TrainingModel(pl.LightningModule):
                 assert prev_model_state[algo] is None
                 new_model_state[algo] = self.model.empty_model_state(algo, features[algo])
             else:
-                new_model_state[algo] = prev_model_state[algo].detach()
+                new_model_state[algo] = prev_model_state[algo]
         return new_model_state
     
     def set_model_state(self, split: Split, is_last: Dict[Algorithm, bool], model_state: Dict[Algorithm, ModelState]):
@@ -206,7 +206,7 @@ class TrainingModel(pl.LightningModule):
             if batch_is_last:
                 prev_model_state[algo] = None
             else:
-                prev_model_state[algo] = model_state[algo]
+                prev_model_state[algo] = model_state[algo].detach()
 
 
     # def on_train_batch_start(self, batch, batch_idx, unused_optimizers=None):

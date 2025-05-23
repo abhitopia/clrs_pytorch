@@ -13,13 +13,13 @@ import warnings
 import torch._logging as torch_logging
 
 # Control the logging to help debug compilation issues
-# torch_logging.set_logs(
+torch_logging.set_logs(
 #     # dynamo=logging.DEBUG,
 #     # inductor=logging.DEBUG,
-#     recompiles=True,
+    recompiles=True,
 #     guards=True,
-#     graph_breaks=True
-# )
+    graph_breaks=True
+)
 
 warnings.filterwarnings("ignore", module=r"torch\._inductor(\.|$)")
 warnings.filterwarnings("ignore", module=r"torch\.utils\._sympy\.")
@@ -52,7 +52,7 @@ def main(
     stacked: bool = typer.Option(False, "--stacked", "-S", help="Stacked training", is_flag=True, flag_value=True),
     compile: bool = typer.Option(False, "--compile", "-C", help="Compile model", is_flag=True, flag_value=True),
     debug: bool = typer.Option(False, "--debug", "-D", help="Debug mode", is_flag=True, flag_value=True),
-    val_check_interval: int = typer.Option(10, "--val-check-interval", "-vci", help="Validation check interval"),
+    val_check_interval: int = typer.Option(500, "--val-check-interval", "-vci", help="Validation check interval"),
 ) -> None:
     
     if stacked:

@@ -724,15 +724,15 @@ class AlgoEvaluator(nn.Module):
         return new_spec, skips
     
     def replace_permutations_with_pointers(self, outputs: Output) -> Output:
-        new_outputs = {k: v.copy() for k, v in outputs.items()}
+        new_outputs = {}
         dont_copy = set()
 
         for skipped in self.skip:
             mask_one_name = skipped
             perm_name = skipped.replace("_mask", "")
             
-            mask_one = outputs[mask_one_name].clone()
-            perm = outputs[perm_name].clone()
+            mask_one = outputs[mask_one_name]
+            perm = outputs[perm_name]
 
             dont_copy.add(mask_one_name)
             dont_copy.add(perm_name)
@@ -745,7 +745,7 @@ class AlgoEvaluator(nn.Module):
 
         for name in outputs:
             if name not in dont_copy:
-                new_outputs[name] = outputs[name].clone()
+                new_outputs[name] = outputs[name]
             
         return new_outputs
 
@@ -952,10 +952,10 @@ class AlgoModel(torch.nn.Module):
             "mode": "reduce-overhead",
             "backend": "inductor"  # Changed back to inductor for better performance
         }
-        self.loss = torch.compile(self.loss, **compilation_kwargs)
-        self.evaluator = torch.compile(self.evaluator, **compilation_kwargs)
+        # self.loss = torch.compile(self.loss, **compilation_kwargs)
+        # self.evaluator = torch.compile(self.evaluator, **compilation_kwargs)
         self.step = torch.compile(self.step, **compilation_kwargs)
-        self.teacher_force = torch.compile(self.teacher_force, **compilation_kwargs)
+        # self.teacher_force = torch.compile(self.teacher_force, **compilation_kwargs)
         # self.merge_predicted_output = torch.compile(self.merge_predicted_output, **compilation_kwargs)
         return self
         # self.get_hint_at_step = torch.compile(self.get_hint_at_step, **compilation_kwargs)

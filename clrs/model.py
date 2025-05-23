@@ -937,6 +937,8 @@ class AlgoModel(torch.nn.Module):
             self.lstm_cell = LSTMCell(self.hidden_dim, self.hidden_dim)
 
     def compile(self):
+
+        torch._dynamo.config.cache_size_limit = 256
         compilation_kwargs = {
             "fullgraph": True,
             "mode": "reduce-overhead",

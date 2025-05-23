@@ -959,14 +959,14 @@ class AlgoModel(torch.nn.Module):
         }
         # self.loss = torch.compile(self.loss, **compilation_kwargs)
         # self.evaluator = torch.compile(self.evaluator, **compilation_kwargs)
-        self.step = torch.compile(self.step, **compilation_kwargs)
+        # self.step = torch.compile(self.step, **compilation_kwargs)
         # self.teacher_force = torch.compile(self.teacher_force, **compilation_kwargs)
         # self.merge_predicted_output = torch.compile(self.merge_predicted_output, **compilation_kwargs)
-        return self
+        # return self
         # self.get_hint_at_step = torch.compile(self.get_hint_at_step, **compilation_kwargs)
         # self.append_step_hints = torch.compile(self.append_step_hints, **compilation_kwargs)
-        # compiled_self = torch.compile(self, fullgraph=False, mode="reduce-overhead", backend="inductor")
-        # return compiled_self
+        compiled_self = torch.compile(self, fullgraph=True, mode="reduce-overhead", backend="inductor")
+        return compiled_self
 
     def apply_lstm(self, model_state: ModelState) -> ModelState:
         if self.use_lstm:
@@ -1090,7 +1090,7 @@ class AlgoModel(torch.nn.Module):
         )
     
     # @torch.compiler.disable(recursive=True)
-    def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, num_steps: Tensor, model_state: ModelState, predict_output: bool) -> Tuple[Trajectory, Trajectory, ModelState]:
+    def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, num_steps: Tensor, model_state: ModelState) -> Tuple[Trajectory, Trajectory, ModelState]:
         max_steps = next(iter(hints.values())).shape[0]
          # Disable the loop as it makes the computational graph too large for torch.compile
 
@@ -1116,14 +1116,13 @@ class AlgoModel(torch.nn.Module):
             predicted_hints.append(last_predictions[Stage.HINT])
             raw_predicted_hints.append(last_raw_predictions[Stage.HINT])
 
-            if predict_output:
-                not_done_mask = num_steps > (step_idx + 1)
-                predicted_output = self.merge_predicted_output(output=predicted_output, 
-                                                            predicted_output=last_predictions[Stage.OUTPUT], 
-                                                            not_done_mask=not_done_mask)
-                raw_predicted_output = self.merge_predicted_output(output=raw_predicted_output, 
-                                                        predicted_output=last_raw_predictions[Stage.OUTPUT], 
+            not_done_mask = num_steps > (step_idx + 1)
+            predicted_output = self.merge_predicted_output(output=predicted_output, 
+                                                        predicted_output=last_predictions[Stage.OUTPUT], 
                                                         not_done_mask=not_done_mask)
+            raw_predicted_output = self.merge_predicted_output(output=raw_predicted_output, 
+                                                    predicted_output=last_raw_predictions[Stage.OUTPUT], 
+                                                    not_done_mask=not_done_mask)
 
         raw_predictions = {
             Stage.HINT: self.stack_step_hints(raw_predicted_hints),
@@ -1141,15 +1140,13 @@ class AlgoModel(torch.nn.Module):
         trajectory, num_steps, num_nodes = feature[0], feature[1], feature[2]
         input, hints, output = trajectory[Stage.INPUT], trajectory[Stage.HINT], trajectory[Stage.OUTPUT]
         max_steps = next(iter(hints.values())).shape[0]
-        has_output = len(output) > 0
 
         prev_model_state = self.empty_model_state(feature) if model_state is None else model_state
         raw_predictions, predictions, nxt_model_state = self._loop(input=input, 
                                                                     hints=hints, 
                                                                     num_nodes=num_nodes, 
                                                                     num_steps=num_steps,
-                                                                    model_state=prev_model_state,
-                                                                    predict_output=has_output)
+                                                                    model_state=prev_model_state)
         # first target hint is never predicted
         # predicted hints are shifted by one step, and the first predicted hint is actually second target hint
         target_hints = self.get_hint_at_step(hints, start_step=1, end_step=max_steps)
@@ -1159,12 +1156,8 @@ class AlgoModel(torch.nn.Module):
         hint_loss = self.loss.hint_loss(prediction=raw_predictions[Stage.HINT], target=target_hints, steps=num_steps, num_nodes=num_nodes)
         hint_evaluations = self.evaluator.evaluate_hints(prediction=predictions[Stage.HINT], target=target_hints, steps=num_steps, num_nodes=num_nodes)
         
-        if has_output:
-            output_loss = self.loss.output_loss(prediction=raw_predictions[Stage.OUTPUT], target=output, steps=num_steps, num_nodes=num_nodes)
-            output_evaluations = self.evaluator.evaluate_output(prediction=predictions[Stage.OUTPUT], target=output, steps=num_steps, num_nodes=num_nodes)
-        else:
-            output_loss = {}
-            output_evaluations = {}
+        output_loss = self.loss.output_loss(prediction=raw_predictions[Stage.OUTPUT], target=output, steps=num_steps, num_nodes=num_nodes)
+        output_evaluations = self.evaluator.evaluate_output(prediction=predictions[Stage.OUTPUT], target=output, steps=num_steps, num_nodes=num_nodes)
 
         losses = {
             Stage.HINT: hint_loss,
@@ -1176,7 +1169,7 @@ class AlgoModel(torch.nn.Module):
             Stage.OUTPUT: output_evaluations
         }
 
-        return (predictions, losses, evaluations), nxt_model_state.detach()
+        return (predictions, losses, evaluations), nxt_model_state
 
 
 DictFeature = Dict[Algorithm, Feature]

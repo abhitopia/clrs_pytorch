@@ -83,13 +83,15 @@ def set_model_state(prev_model_state, is_last, next_model_state):
         if batch_is_last:
             prev_model_state[algo] = None
         else:
-            prev_model_state[algo] = next_model_state[algo]
+            prev_model_state[algo] = next_model_state[algo].detach()
 
     return prev_model_state
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 for batch_idx, (feature, is_first, is_last) in enumerate(dl):
+    if batch_idx not in [0, 5, 6]:
+        continue
     print(f"Processing Batch {batch_idx} {is_first} {is_last}")
     optimizer.zero_grad()
     prev_model_state = get_model_state(model, prev_model_state, is_first, feature)

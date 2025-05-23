@@ -159,15 +159,15 @@ def batch_iterator(
                     end_idx = min(start_idx + chunk_size_now, num_steps)
 
                     inputs = trajectory[Stage.INPUT]
+                    outputs = trajectory[Stage.OUTPUT]
                     hints = {}
-                    outputs = {}
                     num_steps = end_idx - start_idx
                     for key, value in trajectory[Stage.HINT].items():
                         hints[key] = value[start_idx:end_idx]
 
-                    if is_last:
-                        for key, value in trajectory[Stage.OUTPUT].items():
-                            outputs[key] = value
+                    # if is_last:
+                    #     for key, value in trajectory[Stage.OUTPUT].items():
+                    #         outputs[key] = value
 
                     new_trajectory = {
                         Stage.INPUT: inputs,

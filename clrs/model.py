@@ -601,9 +601,9 @@ class Evaluator(nn.Module):
         truth_pos = target > 0.5
 
         # 3) True positives / false positives / false negatives
-        tp = ((pred_pos  & truth_pos).float() * valid).sum()
-        fp = ((pred_pos  & ~truth_pos).float() * valid).sum()
-        fn = ((~pred_pos & truth_pos).float() * valid).sum()
+        tp = ((pred_pos  & truth_pos).type_as(prediction) * valid).sum()
+        fp = ((pred_pos  & ~truth_pos).type_as(prediction) * valid).sum()
+        fn = ((~pred_pos & truth_pos).type_as(prediction) * valid).sum()
 
         # 4) Precision & recall, defaulting to 1 when denominator == 0
         precision = torch.where((tp + fp) > 0,

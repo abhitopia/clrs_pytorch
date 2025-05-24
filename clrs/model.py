@@ -147,7 +147,7 @@ class Loss(nn.Module):
             steps_mask = get_steps_mask(num_steps, loss).type_as(mask)
             mask = steps_mask * mask
 
-        loss = torch.sum(loss * mask) / torch.sum(mask)
+        loss = torch.sum(loss * mask) / (torch.sum(mask) + 1e-8)
         return loss
 
 class Encoder(nn.Module):
@@ -583,7 +583,7 @@ class Evaluator(nn.Module):
         total    = mask_f.sum()           # number of valid entries
 
         # 7) scalar accuracy
-        return correct / total
+        return correct / (total + 1e-8)
     
     def eval_mask(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
         # 1) Build float mask of "valid" positions
@@ -652,7 +652,7 @@ class Evaluator(nn.Module):
         total   = mask_f.sum()
 
         # returns a single scalar Tensor
-        return correct / total
+        return correct / (total + 1e-8)
 
     def eval_scalar(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
         if num_nodes is not None:
@@ -673,7 +673,7 @@ class Evaluator(nn.Module):
         # 4) Sum only the masked errors, then divide by number of masked elements
         total_err = (sq_err * mask_f).sum()
         count     = mask_f.sum()
-        return total_err / count
+        return total_err / (count + 1e-8)
            
     def forward(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
         assert prediction.shape == target.shape, "Prediction and target must have the same shape"

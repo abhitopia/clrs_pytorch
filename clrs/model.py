@@ -722,8 +722,10 @@ class AlgoEvaluator(nn.Module):
                 assert dp[2] == Type.MASK_ONE
                 assert dp[1] == Location.NODE
         return new_spec, skips
-    
-    def replace_permutations_with_pointers(self, outputs: Output) -> Output:
+
+    def replace_permutations_with_pointers(self, trajectory: Trajectory) -> Trajectory:
+        new_trajectory = {Stage.HINT: trajectory[Stage.HINT]}
+        outputs = trajectory[Stage.OUTPUT]
         new_outputs = {}
         dont_copy = set()
 
@@ -746,24 +748,23 @@ class AlgoEvaluator(nn.Module):
         for name in outputs:
             if name not in dont_copy:
                 new_outputs[name] = outputs[name]
-            
-        return new_outputs
-
-    def evaluate_hints(self, prediction: Hints, target: Hints, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Hints:
-        evaluations = {}
-        if self.decode_hints:
-            for name, evaluator in self.evaluators[Stage.HINT].items():
-                evaluations[name] = evaluator(prediction[name], target[name], steps, num_nodes)
-        return evaluations
+        new_trajectory[Stage.OUTPUT] = new_outputs
+        return new_trajectory
     
-    def evaluate_output(self, prediction: Output, target: Output, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Output:
-        evaluations = {}
+    def forward(self, prediction: Trajectory, target: Trajectory, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Trajectory:
+        evaluations = {Stage.OUTPUT: {}}
         if len(self.skip) > 0:
             prediction = self.replace_permutations_with_pointers(prediction)
             target = self.replace_permutations_with_pointers(target)
-
+        
         for name, evaluator in self.evaluators[Stage.OUTPUT].items():
-            evaluations[name] = evaluator(prediction[name], target[name], steps, num_nodes)
+            evaluations[Stage.OUTPUT][name] = evaluator(prediction[Stage.OUTPUT][name], target[Stage.OUTPUT][name], steps, num_nodes)
+
+        if self.decode_hints:
+            evaluations[Stage.HINT] = {}
+            for name, evaluator in self.evaluators[Stage.HINT].items():
+                evaluations[Stage.HINT][name] = evaluator(prediction[Stage.HINT][name], target[Stage.HINT][name], steps, num_nodes)
+
         return evaluations
 
 class AlgoLoss(nn.Module):
@@ -1109,24 +1110,8 @@ class AlgoModel(torch.nn.Module):
             Stage.HINT: self.get_hint_at_step(predictions[Stage.HINT], start_step=0, end_step=max_steps-1)
         }
         
-        raw_predictions[Stage.OUTPUT] = self.extract_last_step(raw_predictions[Stage.OUTPUT], num_steps)
-        predictions[Stage.OUTPUT] = self.extract_last_step(predictions[Stage.OUTPUT], num_steps)
-
-        # first target hint is never predicted
-        # predicted hints are shifted by one step, and the first predicted hint is actually second target hint
-        target_hints = self.get_hint_at_step(hints, start_step=1, end_step=max_steps)
-        raw_predictions[Stage.HINT] = self.get_hint_at_step(raw_predictions[Stage.HINT], start_step=0, end_step=max_steps-1)
-        predictions[Stage.HINT] = self.get_hint_at_step(predictions[Stage.HINT], start_step=0, end_step=max_steps-1)
-
-        hint_evaluations = self.evaluator.evaluate_hints(prediction=predictions[Stage.HINT], target=target_hints, steps=num_steps, num_nodes=num_nodes)
-        output_evaluations = self.evaluator.evaluate_output(prediction=predictions[Stage.OUTPUT], target=output, steps=num_steps, num_nodes=num_nodes)
-
+        evaluations = self.evaluator(prediction=prediction, target=target, steps=num_steps, num_nodes=num_nodes)
         losses = self.loss(prediction=raw_prediction, target=target, steps=num_steps, num_nodes=num_nodes)
-        evaluations = {
-            Stage.HINT: hint_evaluations,
-            Stage.OUTPUT: output_evaluations
-        }
-
         return (predictions, losses, evaluations), nxt_model_state
 
 

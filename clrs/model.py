@@ -1047,7 +1047,7 @@ class AlgoModel(torch.nn.Module):
         # Update the model state last predicted hint with the predicted hints of the current step
         nxt_model_state = ModelState(processor_state=model_state.processor_state,
                                       lstm_state=model_state.lstm_state,
-                                      last_predicted_hint=predicted_hints)
+                                      last_predicted_hint=tree_sort(predicted_hints))
 
         prediction = {Stage.HINT: predicted_hints, Stage.OUTPUT: predicted_output}
         raw_prediction = {Stage.HINT: raw_predicted_hints, Stage.OUTPUT: raw_predicted_output}

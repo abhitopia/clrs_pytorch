@@ -263,14 +263,16 @@ def train(config: TrainerConfig,
           debug: bool = False,
           compile: bool = False) -> None:
 
-    num_workers = 0 if debug else min(os.cpu_count() - 1, 8)
+    num_workers = 0 if debug else min(math.floor((os.cpu_count() - 1) // len(config.algorithms)), 8)
+    num_workers = min(num_workers, 2)
+
     project_name = project_name + "_debug" if debug else project_name
     
     pl.seed_everything(config.seed)
 
     # Dummy call to get the specs
     train_dl = config.get_dataloader(Split.TRAIN, num_workers=num_workers)
-    val_dl = config.get_dataloader(Split.VAL, num_workers=num_workers)        
+    val_dl = config.get_dataloader(Split.VAL, num_workers=0 if debug else 2)        
     model_specs = val_dl.dataset.specs
 
     model = config.get_model(model_specs)

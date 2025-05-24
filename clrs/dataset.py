@@ -3,6 +3,8 @@ import math
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
+
+from .utils import tree_sort
 from .specs import Algorithm, Feature, Spec, Stage, NumNodes, NumSteps, Type
 from .algorithm import AlgorithmSampler
 from typing import Iterator, List, Dict, Optional, Tuple, Union
@@ -85,7 +87,7 @@ def collate_features(spec: Spec, features: List[Feature], min_hint_steps: int = 
     else:
         steps = steps[0] if len(steps) == 1 else steps   # In the case of a single trajectory and not converted to tensor
         num_nodes = num_nodes[0] if len(num_nodes) == 1 else num_nodes
-    batch_feature = (batch_trajectory, steps, num_nodes)
+    batch_feature = (tree_sort(batch_trajectory), steps, num_nodes)
     return batch_feature
 
 def combined_algorithm_sampler(algorithm: Algorithm, sizes: List[int], seed: int, algo_kwargs: Dict):

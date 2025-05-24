@@ -1083,10 +1083,13 @@ class AlgoModel(torch.nn.Module):
         predicted_output: Output = {}
         raw_predicted_output: Output = {}
 
-        last_predicted_hints: Hints = {}
+        last_predicted_hints = self.get_hint_at_step(hints, start_step=0)
+
+        
         for step_idx in range(max_steps):
             orig_hints_at_step = self.get_hint_at_step(hints, step_idx)
             hints_at_step = self.teacher_force(orig_hints_at_step, last_predicted_hints)
+
             last_raw_predictions, last_predictions, model_state = self.step(
                                                                             input=input,
                                                                             step_hint=hints_at_step,
@@ -1094,6 +1097,8 @@ class AlgoModel(torch.nn.Module):
                                                                             model_state=model_state          
                                                                         )
 
+            # Set the last predicted hints to the predicted hints of the current step
+            last_predicted_hints = last_predictions[Stage.HINT]
             predicted_hints.append(last_predictions[Stage.HINT])
             raw_predicted_hints.append(last_raw_predictions[Stage.HINT])
 

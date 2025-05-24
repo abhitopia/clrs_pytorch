@@ -54,11 +54,14 @@ class ReconstMode(str, Enum):
 
 def get_steps_mask(num_steps: NumSteps, data: Tensor) -> Tensor:
     """
-    This already accounts for one less step in predicted hints.
+    steps_mask.shape = data.shape
+    For all batch indices b,
+        steps_mask[:(num_steps[b]-1), b, :] = True
+        steps_mask[(num_steps[b]-1):, b, :] = False
     """
     max_steps = data.shape[0]
     batch_size = num_steps.shape[0]
-    steps_mask = num_steps > (torch.arange(max_steps, device=num_steps.device).unsqueeze(1) + 1)
+    steps_mask = (num_steps - 1) >= torch.arange(max_steps, device=num_steps.device).unsqueeze(1)
     assert steps_mask.shape == (max_steps, batch_size)
     target_mask_shape = (max_steps, batch_size) + (1,) * (data.dim() - 2)
     return steps_mask.view(target_mask_shape).expand(data.shape)
@@ -620,7 +623,6 @@ class Evaluator(nn.Module):
 
         return f1
     
-
     def get_node_mask(self, num_nodes: Tensor, prediction: Tensor) -> Tensor:
         offset = 1 if self.type_ == Type.CATEGORICAL else 0
         prior_dims = 1 if self.stage == Stage.OUTPUT else 2  # 2 for hint
@@ -652,7 +654,6 @@ class Evaluator(nn.Module):
         # returns a single scalar Tensor
         return correct / total
 
-    
     def eval_scalar(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
         if num_nodes is not None:
             mask = self.get_node_mask(num_nodes, prediction)
@@ -673,8 +674,7 @@ class Evaluator(nn.Module):
         total_err = (sq_err * mask_f).sum()
         count     = mask_f.sum()
         return total_err / count
-        
-        
+           
     def forward(self, prediction: Tensor, target: Tensor, steps: Optional[Tensor] = None, num_nodes: Optional[Tensor] = None) -> Tensor:
         assert prediction.shape == target.shape, "Prediction and target must have the same shape"
         if self.type_ in [Type.MASK_ONE, Type.CATEGORICAL]:
@@ -898,7 +898,6 @@ class AlgoDecoder(nn.ModuleDict):
             raw_output[name], output[name] = decoder.decode(graph_features, num_nodes)
         return raw_output, output
 
-
 class ModelState(NamedTuple):
     processor_state: Tensor
     lstm_state: Optional[LSTMState] = None
@@ -1110,8 +1109,9 @@ class AlgoModel(torch.nn.Module):
             Stage.HINT: self.get_hint_at_step(predictions[Stage.HINT], start_step=0, end_step=max_steps-1)
         }
         
-        evaluations = self.evaluator(prediction=prediction, target=target, steps=num_steps, num_nodes=num_nodes)
-        losses = self.loss(prediction=raw_prediction, target=target, steps=num_steps, num_nodes=num_nodes)
+        # num_nodes - 1 because the number of hints have effectively been reduced by 1 to above indexing
+        evaluations = self.evaluator(prediction=prediction, target=target, steps=num_steps - 1, num_nodes=num_nodes)
+        losses = self.loss(prediction=raw_prediction, target=target, steps=num_steps - 1, num_nodes=num_nodes)
         return (predictions, losses, evaluations), nxt_model_state
 
 

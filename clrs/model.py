@@ -765,7 +765,7 @@ class AlgoEvaluator(nn.Module):
             for name, evaluator in self.evaluators[Stage.HINT].items():
                 evaluations[Stage.HINT][name] = evaluator(prediction[Stage.HINT][name], target[Stage.HINT][name], steps, num_nodes)
 
-        return evaluations
+        return tree_sort(evaluations)
 
 class AlgoLoss(nn.Module):
     def __init__(self, spec: Spec, decode_hints: bool):
@@ -795,7 +795,7 @@ class AlgoLoss(nn.Module):
             losses[Stage.HINT] = {}
             for name, loss in self.loss[Stage.HINT].items():
                 losses[Stage.HINT][name] = loss(prediction[Stage.HINT][name], target[Stage.HINT][name], steps, num_nodes)
-        return losses
+        return tree_sort(losses)
 
 class AlgoEncoder(nn.ModuleDict):
     def __init__(self, spec: Spec, 
@@ -1003,12 +1003,32 @@ class AlgoModel(torch.nn.Module):
             last_predicted_hint=hint_at_step0
         )
         
-    @staticmethod 
+    # @staticmethod 
+    # def extract_last_step(output: Output, num_steps: NumSteps) -> Output:
+    #     B = num_steps.shape[0]
+    #     last_step  = num_steps - 1      # shape (B,)        
+    #     batch_idx = torch.arange(B, device=num_steps.device)
+    #     return tree_map(lambda x: x[last_step, batch_idx], output)
+
+    @staticmethod
     def extract_last_step(output: Output, num_steps: NumSteps) -> Output:
+        """
+        For each batch b, picks output[name][num_steps[b]-1, b, ...] for every tensor
+        in the `output` dict. Works for tensors of shape [T, B, ...].
+        """
         B = num_steps.shape[0]
-        last_step  = num_steps - 1      # shape (B,)        
-        batch_idx = torch.arange(B, device=num_steps.device)
-        return tree_map(lambda x: x[last_step, batch_idx], output)
+        last = num_steps - 1  # shape [B]
+
+        def pick(x: torch.Tensor) -> torch.Tensor:
+            # x.shape = [T, B, d3, d4, ...]
+            # build idx of shape [1, B, d3, d4, ...]
+            tail = list(x.shape[2:])                # [d3, d4, ...]
+            idx = last.view((1, B) + (1,) * len(tail))  # [1, B, 1, 1, ...]
+            idx = idx.expand((1, B) + tuple(tail))      # [1, B, d3, ...]
+            # pick along dim=0, then remove that dim
+            return torch.take_along_dim(x, idx, dim=0).squeeze(0)
+
+        return tree_map(pick, output)
     
     def step(self, 
              input: Input, 

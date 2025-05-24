@@ -206,7 +206,7 @@ class TrainingModel(pl.LightningModule):
         for algo, batch_is_first in is_first.items():
             if batch_is_first:
                 assert prev_model_state[algo] is None
-                new_model_state[algo] = self.model.empty_model_state(algo, features[algo])
+                new_model_state[algo] = self.model.init_model_state(algo, features[algo])
             else:
                 new_model_state[algo] = prev_model_state[algo]
         return new_model_state

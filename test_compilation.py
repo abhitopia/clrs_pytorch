@@ -3,8 +3,22 @@ from clrs.dataset import AlgoFeatureDataset, CyclicAlgoFeatureDataset, Algorithm
 from clrs.model import Model, ReconstMode
 from clrs.processors import Processor
 from clrs.utils import tree_map
+import pytorch_lightning as pl
+
+pl.seed_everything(42)
 
 torch._dynamo.config.verbose = True
+
+import torch._logging as torch_logging
+
+# Control the logging to help debug compilation issues
+torch_logging.set_logs(
+#     # dynamo=logging.DEBUG,
+#     # inductor=logging.DEBUG,
+    recompiles=True,
+#     guards=True,
+    graph_breaks=True
+)
 
 seed = 42
 num_batches = 100
@@ -69,7 +83,7 @@ def get_model_state(model, prev_model_state, is_first, features):
     for algo, batch_is_first in is_first.items():
         if batch_is_first:
             assert prev_model_state[algo] is None
-            prev_model_state[algo] = model.empty_model_state(algo, features[algo])
+            prev_model_state[algo] = model.init_model_state(algo, features[algo])
         else:
             prev_model_state[algo] = prev_model_state[algo]
     return prev_model_state

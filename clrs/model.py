@@ -914,9 +914,10 @@ class ModelState(NamedTuple):
     
     def detach(self) -> "ModelState":
         # Important to mark requires_grad=True after clone.detach() to prevent recompilation
+        detached_hints = {k: v.clone().detach() for k, v in self.last_predicted_hint.items()} if self.last_predicted_hint is not None else None
         return ModelState(processor_state=self.processor_state.clone().detach().requires_grad_(True),
                           lstm_state=self.lstm_state.clone().detach().requires_grad_(True) if self.lstm_state is not None else None,
-                          last_predicted_hint=self.last_predicted_hint.clone().detach() if self.last_predicted_hint is not None else None)
+                          last_predicted_hint=detached_hints)
 
 
 class AlgoModel(torch.nn.Module):
@@ -961,7 +962,7 @@ class AlgoModel(torch.nn.Module):
             lstm_input = processor_state.reshape(batch_size * nb_nodes, self.hidden_dim)
             lstm_out, lstm_state = self.lstm_cell(lstm_input, lstm_state)
             processor_state = lstm_out.reshape(batch_size, nb_nodes, self.hidden_dim)
-            return ModelState(processor_state=processor_state, lstm_state=lstm_state)
+            return ModelState(processor_state=processor_state, lstm_state=lstm_state, last_predicted_hint=model_state.last_predicted_hint)
 
         return model_state
 
@@ -998,6 +999,12 @@ class AlgoModel(torch.nn.Module):
         raw_predicted_hints, predicted_hints = self.decoder.hints_decode(graph_features_decoder, num_nodes=num_nodes)
         raw_predicted_output, predicted_output = self.decoder.output_decode(graph_features_decoder, num_nodes=num_nodes)
 
+
+        # Update the model state last predicted hint with the predicted hints of the current step
+        nxt_model_state = ModelState(processor_state=model_state.processor_state,
+                                      lstm_state=model_state.lstm_state,
+                                      last_predicted_hint=predicted_hints)
+
         prediction = {Stage.HINT: predicted_hints, Stage.OUTPUT: predicted_output}
         raw_prediction = {Stage.HINT: raw_predicted_hints, Stage.OUTPUT: raw_predicted_output}
         return raw_prediction, prediction, nxt_model_state
@@ -1031,7 +1038,7 @@ class AlgoModel(torch.nn.Module):
 
 
     def teacher_force(self, orig_hints: Hints, predicted_hints: Hints) -> Hints:
-        if len(predicted_hints) == 0 or self.hint_teacher_forcing == 1.0:
+        if self.hint_teacher_forcing == 1.0:
             return orig_hints
         
         if not self.training or self.hint_teacher_forcing == 0.0:
@@ -1075,7 +1082,6 @@ class AlgoModel(torch.nn.Module):
             last_predicted_hint=hint_at_step0
         )
     
-    # @torch.compiler.disable(recursive=True)
     def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, num_steps: Tensor, model_state: ModelState) -> Tuple[Trajectory, Trajectory, ModelState]:
         max_steps = next(iter(hints.values())).shape[0]
          # Disable the loop as it makes the computational graph too large for torch.compile
@@ -1087,13 +1093,10 @@ class AlgoModel(torch.nn.Module):
         # Output
         predicted_output: Output = {}
         raw_predicted_output: Output = {}
-
-        # This is usually set at the step 0 hint in a fresh batch or the last predicted hint of the previous batch (in chunked training)
-        last_predicted_hint = model_state.last_predicted_hint
         
         for step_idx in range(max_steps):
             orig_hints_at_step = self.get_hint_at_step(hints, step_idx)
-            hints_at_step = self.teacher_force(orig_hints_at_step, last_predicted_hint)
+            hints_at_step = self.teacher_force(orig_hints_at_step, model_state.last_predicted_hint)
 
             last_raw_predictions, last_predictions, model_state = self.step(
                                                                             input=input,
@@ -1103,7 +1106,6 @@ class AlgoModel(torch.nn.Module):
                                                                         )
 
             # Set the last predicted hints to the predicted hints of the current step
-            last_predicted_hint = last_predictions[Stage.HINT]
             predicted_hints.append(last_predictions[Stage.HINT])
             raw_predicted_hints.append(last_raw_predictions[Stage.HINT])
 

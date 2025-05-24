@@ -220,9 +220,8 @@ class TrainingModel(pl.LightningModule):
                 prev_model_state[algo] = model_state[algo].detach()
 
 
-    # def on_train_batch_start(self, batch, batch_idx, unused_optimizers=None):
-    #     # PyTorch now knows: “this is the start of my CUDA‐graph’d step”
-    #     torch.compiler.cudagraph_mark_step_begin()
+    def on_train_batch_start(self, batch, batch_idx, unused_optimizers=None):
+        torch.compiler.cudagraph_mark_step_begin()
 
     def training_step(self, batch: DictFeatureBatch, batch_idx: int):
         print(batch[0].keys())
@@ -233,8 +232,8 @@ class TrainingModel(pl.LightningModule):
         total_loss = self.log_metrics(Split.TRAIN, evaluations, losses, is_first, is_last)
         return total_loss
 
-    # def on_validation_batch_start(self, batch, batch_idx, dataloader_idx=0):
-    #     torch.compiler.cudagraph_mark_step_begin()
+    def on_validation_batch_start(self, batch, batch_idx, dataloader_idx=0):
+        torch.compiler.cudagraph_mark_step_begin()
     
     # This is added to prevent triggering recompilation due to grad mode change
     @torch.enable_grad()

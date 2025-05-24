@@ -1005,6 +1005,8 @@ class AlgoModel(torch.nn.Module):
         
     # @staticmethod 
     # def extract_last_step(output: Output, num_steps: NumSteps) -> Output:
+    #     # Unfortunately, this is not supported by cuda when using torch.compile, causing 
+    #     # significant slowdowns.
     #     B = num_steps.shape[0]
     #     last_step  = num_steps - 1      # shape (B,)        
     #     batch_idx = torch.arange(B, device=num_steps.device)
@@ -1013,6 +1015,8 @@ class AlgoModel(torch.nn.Module):
     @staticmethod
     def extract_last_step(output: Output, num_steps: NumSteps) -> Output:
         """
+        Replacement for above extract_last_step, which is not supported by cuda when using torch.compile, causing 
+        
         For each batch b, picks output[name][num_steps[b]-1, b, ...] for every tensor
         in the `output` dict. Works for tensors of shape [T, B, ...].
         """

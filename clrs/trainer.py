@@ -263,9 +263,7 @@ def train(config: TrainerConfig,
           debug: bool = False,
           compile: bool = False) -> None:
 
-    num_workers = 0 if debug else min(math.floor((os.cpu_count() - 1) // len(config.algorithms)), 8)
-    num_workers = min(num_workers, 2)
-
+    num_workers = 0 if debug else min(os.cpu_count() - 2, 8)
     project_name = project_name + "_debug" if debug else project_name
     
     pl.seed_everything(config.seed)

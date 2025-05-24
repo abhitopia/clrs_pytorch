@@ -263,7 +263,7 @@ class AlgoFeatureDataset(Dataset):
                           batch_size=None,
                           collate_fn=_collate_fn,
                           persistent_workers=num_workers > 0,
-                          prefetch_factor=30 if num_workers > 0 else None,
+                          prefetch_factor=10 if num_workers > 0 else None,
                           num_workers=num_workers)
     
 
@@ -301,7 +301,7 @@ class CyclicAlgoFeatureDataset(Dataset):
                           batch_size=None,
                           collate_fn=_collate_fn,
                           persistent_workers=num_workers > 0,
-                          prefetch_factor=30 if num_workers > 0 else None,
+                          prefetch_factor=10 if num_workers > 0 else None,
                           num_workers=num_workers)
     
 
@@ -335,7 +335,7 @@ class StackedAlgoFeatureDataset(Dataset):
                           batch_size=None,
                           collate_fn=_collate_fn,
                           persistent_workers=num_workers > 0,
-                          prefetch_factor=30 if num_workers > 0 else None,
+                          prefetch_factor=10 if num_workers > 0 else None,
                           num_workers=num_workers)
 
 

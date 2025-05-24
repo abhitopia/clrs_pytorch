@@ -14,6 +14,8 @@
 - [x] Make static batches work with loss
 - [x] Make static batches work with lstm
 - [x] Fix examples_seen to use is_first and is_last
+- [ ] todo: refactor hint_at_step to use tree_map
+- [ ] todo: refactor extract_last_step to use tree_map
 - [ ] Make chunked training work with compiled model
 
 

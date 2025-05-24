@@ -1063,13 +1063,8 @@ class AlgoModel(torch.nn.Module):
     def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, model_state: ModelState) -> Tuple[Trajectory, Trajectory, ModelState]:
         max_steps = next(iter(hints.values())).shape[0]
          # Disable the loop as it makes the computational graph too large for torch.compile
-
-        # Hints
-        predicted_hints: List[Hints] = []
-        raw_predicted_hints: List[Hints] = []
-
-        predicted_outputs: List[Output] = []
-        raw_predicted_outputs: List[Output] = []
+        raw_predictions: List[Trajectory] = []
+        predictions: List[Trajectory] = []
         
         for step_idx in range(max_steps):
             orig_hints_at_step = self.get_hint_at_step(hints, step_idx)
@@ -1079,23 +1074,13 @@ class AlgoModel(torch.nn.Module):
                                                                             input=input,
                                                                             step_hint=hints_at_step,
                                                                             num_nodes=num_nodes,
-                                                                            model_state=model_state          
-                                                                        )
+                                                                            model_state=model_state)
 
-            # Set the last predicted hints to the predicted hints of the current step
-            predicted_hints.append(last_predictions[Stage.HINT])
-            raw_predicted_hints.append(last_raw_predictions[Stage.HINT])
-            predicted_outputs.append(last_predictions[Stage.OUTPUT])
-            raw_predicted_outputs.append(last_raw_predictions[Stage.OUTPUT])
+            raw_predictions.append(last_raw_predictions)
+            predictions.append(last_predictions)
 
-        raw_predictions = {
-            Stage.HINT: tree_map_list(lambda x: torch.stack(x, dim=0), raw_predicted_hints),
-            Stage.OUTPUT: tree_map_list(lambda x: torch.stack(x, dim=0), raw_predicted_outputs)
-        }
-        predictions = {
-            Stage.HINT: tree_map_list(lambda x: torch.stack(x, dim=0), predicted_hints),
-            Stage.OUTPUT: tree_map_list(lambda x: torch.stack(x, dim=0), predicted_outputs)
-        }
+        raw_predictions = tree_map_list(lambda x: torch.stack(x, dim=0), raw_predictions)
+        predictions = tree_map_list(lambda x: torch.stack(x, dim=0), predictions)
             
         return raw_predictions, predictions, model_state
 

@@ -2,7 +2,7 @@ import torch
 from clrs.dataset import AlgoFeatureDataset, CyclicAlgoFeatureDataset, Algorithm
 from clrs.model import Model, ReconstMode
 from clrs.processors import Processor
-from clrs.utils import tree_map
+from clrs.utils import tree_flatten, tree_map
 import pytorch_lightning as pl
 
 pl.seed_everything(42)
@@ -23,10 +23,10 @@ torch_logging.set_logs(
 seed = 42
 num_batches = 100
 
-algorithms = [Algorithm.dfs, Algorithm.articulation_points]
+algorithms = [Algorithm.dfs]
 sizes = [16]
 
-chunk_size = 8
+chunk_size = 16
 batch_size = 32
 static_batch_size = True
 
@@ -76,7 +76,7 @@ model = Model(specs=specs,
                 hint_teacher_forcing=0.0,
                 dropout=0.0)
 
-model.compile()
+# model.compile()
 
 
 def get_model_state(model, prev_model_state, is_first, features):
@@ -106,8 +106,7 @@ for batch_idx, (feature, is_first, is_last) in enumerate(dl):
     prev_model_state = get_model_state(model, prev_model_state, is_first, feature)
     (predictions, losses, evaluations), next_model_state = model(feature, prev_model_state)
     prev_model_state = set_model_state(prev_model_state, is_last, next_model_state)
-    flat_losses = []
-    tree_map(lambda x: flat_losses.append(x), losses)
+    flat_losses = tree_flatten(losses)
     total_loss = sum(flat_losses)
 
     print("Forwards Pass done!")

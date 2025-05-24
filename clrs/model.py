@@ -906,15 +906,15 @@ class ModelState(NamedTuple):
     @classmethod
     def init(cls, batch_size: int, nb_nodes: int, hidden_dim: int, use_lstm: bool, last_predicted_hint: Optional[Hints] = None, device: torch.device = torch.device("cpu")) -> "ModelState":
         # Important to mark requires_grad=True to prevent recompilation on every step
-        return cls(processor_state=torch.zeros((batch_size, nb_nodes, hidden_dim), device=device, requires_grad=True),
-                   lstm_state=LSTMState.empty((batch_size * nb_nodes, hidden_dim), device=device, requires_grad=True) if use_lstm else None,
+        return cls(processor_state=torch.zeros((batch_size, nb_nodes, hidden_dim), device=device),
+                   lstm_state=LSTMState.empty((batch_size * nb_nodes, hidden_dim), device=device) if use_lstm else None,
                    last_predicted_hint=last_predicted_hint)
     
     def detach(self) -> "ModelState":
         # Important to mark requires_grad=True after clone.detach() to prevent recompilation
         detached_hints = {k: v.clone().detach() for k, v in self.last_predicted_hint.items()} if self.last_predicted_hint is not None else None
-        return ModelState(processor_state=self.processor_state.clone().detach().requires_grad_(True),
-                          lstm_state=self.lstm_state.clone().detach().requires_grad_(True) if self.lstm_state is not None else None,
+        return ModelState(processor_state=self.processor_state.clone().detach(),
+                          lstm_state=self.lstm_state.clone().detach() if self.lstm_state is not None else None,
                           last_predicted_hint=detached_hints)
 
 class AlgoModel(torch.nn.Module):
@@ -973,7 +973,7 @@ class AlgoModel(torch.nn.Module):
         if self.hint_teacher_forcing == 1.0:
             return orig_hints
         
-        if not self.training or self.hint_teacher_forcing == 0.0:
+        if self.hint_teacher_forcing == 0.0 or not self.training:
             # For inference, use the predicted features from the previous step
             return predicted_hints
         
@@ -1080,7 +1080,6 @@ class AlgoModel(torch.nn.Module):
 
 
     def forward(self, feature: Feature, model_state: Optional[ModelState] = None) -> Tuple[Tuple[Trajectory, Trajectory, Trajectory], ModelState]:
-
         trajectory, num_steps, num_nodes = feature[0], feature[1], feature[2]
         input, hints, output = trajectory[Stage.INPUT], trajectory[Stage.HINT], trajectory[Stage.OUTPUT]
         max_steps = next(iter(hints.values())).shape[0]
@@ -1089,8 +1088,7 @@ class AlgoModel(torch.nn.Module):
         raw_predictions, predictions, nxt_model_state = self._loop(input=input, 
                                                                     hints=hints, 
                                                                     num_nodes=num_nodes, 
-                                                                    model_state=prev_model_state)
-        
+                                                                    model_state=prev_model_state)   
         target: Trajectory = {
             Stage.OUTPUT: output,
             # first target hint is never predicted

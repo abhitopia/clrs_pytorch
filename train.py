@@ -1,6 +1,5 @@
 #! python
 import os
-import torch
 from pathlib import Path
 from typing import List, Optional
 import typer
@@ -9,17 +8,9 @@ from clrs.trainer import TrainerConfig, train
 import logging
 from rich import print
 import warnings
-
 import torch._logging as torch_logging
 
-# Control the logging to help debug compilation issues
-torch_logging.set_logs(
-#     # dynamo=logging.DEBUG,
-#     # inductor=logging.DEBUG,
-    recompiles=True,
-#     guards=True,
-    graph_breaks=True
-)
+
 
 warnings.filterwarnings("ignore", module=r"torch\._inductor(\.|$)")
 warnings.filterwarnings("ignore", module=r"torch\.utils\._sympy\.")
@@ -57,6 +48,14 @@ def main(
     debug: bool = typer.Option(False, "--debug", "-D", help="Debug mode", is_flag=True, flag_value=True),
     val_check_interval: int = typer.Option(1000, "--val-check-interval", "-vci", help="Validation check interval"),
 ) -> None:    
+    
+    if debug:
+        # Control the logging to help debug compilation issues
+        torch_logging.set_logs(
+            recompiles=True,
+        #     guards=True,
+            graph_breaks=True)
+    
     if stacked:
         assert len(algos) > 1, "Stacked training requires at least two algorithms"
         

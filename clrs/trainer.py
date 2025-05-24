@@ -8,7 +8,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from torch.optim import Adam
 import torch
-from .utils import tree_map
+from .utils import tree_flatten
 from .trainer_utils import CustomRichProgressBar, ModelCheckpointWithWandbSync
 from .specs import CLRS30Algorithms, Algorithm, Spec, Feature, Stage
 from .processors import Processor
@@ -168,18 +168,15 @@ class TrainingModel(pl.LightningModule):
                 algo_metrics[f"{algo}/examples_seen"] = self.examples_seen[algo]
                 algo_metrics[f"{algo}/batches_seen"] = self.batches_seen[algo]
 
-            flat_hints_eval, flat_hints_loss = [], [] 
-
-            tree_map(lambda x: flat_hints_eval.append(x), evaluations[algo][Stage.HINT])
-            tree_map(lambda x: flat_hints_loss.append(x), losses[algo][Stage.HINT])
+            flat_hints_eval = tree_flatten(evaluations[algo][Stage.HINT])
+            flat_hints_loss = tree_flatten(losses[algo][Stage.HINT])
             loss_algo = sum(flat_hints_loss)
             score_algo = sum(flat_hints_eval).detach().cpu().item()/len(flat_hints_eval)
 
 
             if is_last[algo]:
-                flat_outputs_eval, flat_outputs_loss = [], [] 
-                tree_map(lambda x: flat_outputs_eval.append(x), evaluations[algo][Stage.OUTPUT])
-                tree_map(lambda x: flat_outputs_loss.append(x), losses[algo][Stage.OUTPUT])
+                flat_outputs_eval = tree_flatten(evaluations[algo][Stage.OUTPUT])
+                flat_outputs_loss = tree_flatten(losses[algo][Stage.OUTPUT])
                 loss_algo = loss_algo + sum(flat_outputs_loss)
                 score_algo = (score_algo * len(flat_hints_eval) + sum(flat_outputs_eval).detach().cpu().item())/(len(flat_hints_eval) + len(flat_outputs_eval))
 

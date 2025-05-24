@@ -17,7 +17,7 @@
 - [x] todo: refactor hint_at_step to use tree_map
 - [x] todo: refactor extract_last_step to use tree_map
 - [x] Make chunked training work with compiled model
-- [ ] require_gradients may not be needed in the model_state anymore
+- [x] require_gradients may not be needed in the model_state anymore
 
 
 # Next make the evaluation and loss work

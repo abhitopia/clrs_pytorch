@@ -1,5 +1,5 @@
 import math
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 from torch import nn
 from torch import Tensor
@@ -48,7 +48,6 @@ def expand(mask: Tensor, target: Tensor, prior_dims: int = 0) -> Tensor:
     unsqueezed_shape = (1,) * prior_dims + mask.shape + (1,) * (target.ndim - mask.ndim - prior_dims)
     return mask.view(unsqueezed_shape).expand(target.shape)
 
-
 def default_linear_init(weight: nn.Parameter, bias: Optional[nn.Parameter]) -> None:
     """
     Dynamically choose between LeCun and Xavier Initialisation
@@ -75,7 +74,6 @@ def default_linear_init(weight: nn.Parameter, bias: Optional[nn.Parameter]) -> N
         # nn.init.zeros_(bias)
         # print(f"Setting bias to {_BIAS_VALUE}")
         nn.init.constant_(bias, _BIAS_VALUE)
-
 
 class Linear(nn.Linear):
     """
@@ -107,7 +105,6 @@ class Linear(nn.Linear):
             self._initizer(self.weight, self.bias)
         else:
             super().reset_parameters()
-
 
 @torch.compiler.disable()
 def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool, add_noise: bool = True, num_nodes: Optional[Tensor] = None) -> Tensor:
@@ -157,97 +154,6 @@ def log_sinkhorn(x: Tensor, steps: int, temperature: float, zero_diagonal: bool,
 
     return x
 
-
-@torch.jit.script
-# JIT-friendly batch_mask for trailing_dims=2
-# valid_count: 1D tensor of shape (batch_size,)
-# max_count: maximum number of nodes (int)
-def batch_mask_two(
-    valid_count: Tensor,
-    max_count: int
-) -> Tensor:
-    """
-    Creates a broadcastable mask of shape (batch_size, max_count, max_count)
-    where mask[i,j,k] = (j < valid_count[i]) & (k < valid_count[i]).
-    This version is statically shaped for trailing_dims=2 to be
-    compatible with TorchScript.
-    """
-    # Ensure valid_count is 1D
-    if valid_count.dim() != 1:
-        raise ValueError("batch_mask_two: valid_count must be a 1D tensor")
-
-    batch_size = valid_count.size(0)
-    # Create arange tensor [0,1,...,max_count-1]
-    arange_nodes = torch.arange(max_count, device=valid_count.device)
-
-    # Reshape valid_count to (batch_size, 1, 1)
-    valid = valid_count.view(batch_size, 1, 1)
-
-    # Create two broadcastable views
-    view0 = arange_nodes.view(1, max_count, 1)
-    view1 = arange_nodes.view(1, 1, max_count)
-
-    # Compare and combine
-    mask0 = view0 < valid  # shape (batch_size, max_count, 1)
-    mask1 = view1 < valid  # shape (batch_size, 1, max_count)
-
-    # Broadcast to (batch_size, max_count, max_count)
-    return mask0 & mask1
-
-
-@torch.compiler.disable()
-@torch.jit.script
-def log_sinkhorn_jit(x: Tensor, steps: int, temperature: float, zero_diagonal: bool, add_noise: bool = True, num_nodes: Optional[Tensor] = None) -> Tensor:
-    """Sinkhorn operator in log space, to postprocess permutation pointer logits.
-
-    Args:
-        x: input of shape [..., n, n], a batch of square matrices.
-        steps: number of iterations.
-        temperature: temperature parameter (as temperature approaches zero, the
-        output approaches a permutation matrix).
-        zero_diagonal: whether to force the diagonal logits towards -inf.
-        add_noise: whether to add Gumbel noise.
-
-    Returns:
-        Elementwise logarithm of a doubly-stochastic matrix (a matrix with
-        non-negative elements whose rows and columns sum to 1).
-    """
-    assert x.ndim >= 2
-    assert x.shape[-1] == x.shape[-2]
-
-    NEG_INF_LOCAL = -1e9
-
-    if add_noise:
-        # Add standard Gumbel noise (see https://arxiv.org/abs/1802.08665)
-        noise = -torch.log(-torch.log(torch.rand_like(x) + 1e-12) + 1e-12).type_as(x)
-        x = x + noise
-
-    x = x / temperature    # Can't do in-place or pytorch gods will scream!
-
-
-    if zero_diagonal:
-        eye = torch.eye(x.shape[-1], device=x.device, dtype=torch.bool)
-        x = x.masked_fill(eye.unsqueeze(0), NEG_INF_LOCAL)
-
-
-  
-    if num_nodes is not None:
-        edge_mask = expand(batch_mask_two(num_nodes, x.size(-1)), x)
-    else:
-        # **always** define edge_mask as “no masking” by default
-        batch_size, n, _ = x.size()
-        edge_mask: Tensor = torch.ones(batch_size, n, n, dtype=torch.bool, device=x.device)
-
-
-
-    for _ in range(steps):
-        x = torch.log_softmax(x, dim=-1)
-        x = x.masked_fill(~edge_mask, NEG_INF_LOCAL)
-        x = torch.log_softmax(x, dim=-2)
-        x = x.masked_fill(~edge_mask, NEG_INF_LOCAL)
-
-    return x
-
 def np_one_hot(labels: np.ndarray, num_classes: Optional[int] = None) -> np.ndarray:
     """One-hot encode a set of labels.
     
@@ -261,104 +167,63 @@ def np_one_hot(labels: np.ndarray, num_classes: Optional[int] = None) -> np.ndar
 
     return one_hot_encoded
 
+NestedTensors = Union[torch.Tensor, Dict[Any, Any], List[Any], Tuple[Any, ...]]
 
-def all_lists_equal(list_of_lists: List[List[Any]]) -> bool:
+def tree_map(fn: Callable[[torch.Tensor], Any], struct: NestedTensors) -> NestedTensors:
+    if isinstance(struct, torch.Tensor):
+        return fn(struct)
+    elif isinstance(struct, dict):
+        return {k: tree_map(fn, v) for k, v in struct.items()}
+    elif isinstance(struct, list):
+        return [tree_map(fn, v) for v in struct]
+    elif isinstance(struct, tuple):
+        return tuple(tree_map(fn, v) for v in struct)
+    else:
+        raise ValueError(f"Unsupported type: {type(struct)}")
+
+def tree_flatten(struct: NestedTensors) -> List[torch.Tensor]:
+    flat_list = []
+    tree_map(lambda x: flat_list.append(x), struct)
+    return flat_list
+
+
+def tree_map_list(fn: Callable[[List[torch.Tensor]], torch.Tensor], structs: Sequence[NestedTensors]) -> NestedTensors:
     """
-    Checks if all lists within a list of lists are equal.
+    Given a list of identical nested-structures `structs`,
+    apply `fn` to the list of corresponding leaf-tensors and
+    rebuild the same nesting with fn‘s outputs.
 
-    Args:
-        list_of_lists: A list where each element is a list.
-
-    Returns:
-        True if all inner lists are equal or if the input list is empty 
-        or contains only one list, False otherwise.
+    fn: a function that takes a List[Tensor] and returns a Tensor
+    structs: a sequence of pytrees all having the same structure
     """
-    if not list_of_lists or len(list_of_lists) == 1:
-        return True
-    
-    first_list = list_of_lists[0]
-    for sub_list in list_of_lists[1:]:
-        if sub_list != first_list:
-            return False
-    return True
+    # grab the first structure to inspect its type
+    first = structs[0]
 
+    if isinstance(first, torch.Tensor):
+        # collect that leaf from all structs
+        leafs = [s for s in structs]           # List[Tensor]
+        return fn(leafs)
 
-def cycle_flatten_list_of_lists(list_of_lists: list[list]) -> list:
-    """
-    Flattens a list of lists by cycling through their elements.
+    elif isinstance(first, dict):
+        # must have same keys in each dict
+        return {
+            k: tree_map_list(fn, [d[k] for d in structs])
+            for k in first.keys()
+        }
+    elif isinstance(first, list):
+        # must all have same length
+        return [
+            tree_map_list(fn, [lst[i] for lst in structs])
+            for i in range(len(first))
+        ]
+    elif isinstance(first, tuple):
+        return tuple(
+            tree_map_list(fn, [tup[i] for tup in structs])
+            for i in range(len(first))
+        )
 
-    Given a list of lists where all sublists are of equal length, this function
-    creates a single list by taking the first element of the first sublist,
-    then the first element of the second sublist, and so on, followed by
-    the second elements of each sublist, etc.
-
-    Args:
-        list_of_lists: A list of lists. All sublists must have the same length.
-
-    Returns:
-        A new list containing the elements from the sublists, cycled and flattened.
-        The total number of elements will be len(list_of_lists) * len(sublist).
-
-    Raises:
-        TypeError: If any element in list_of_lists is not a list.
-        ValueError: If sublists do not all have the same length.
-
-    Example:
-        >>> cycle_flatten_list_of_lists([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
-        [1, 4, 7, 2, 5, 8, 3, 6, 9]
-        >>> cycle_flatten_list_of_lists([['a', 'b'], ['c', 'd']])
-        ['a', 'c', 'b', 'd']
-    """
-    if not list_of_lists:
-        return []
-
-    if not all(isinstance(sublist, list) for sublist in list_of_lists):
-        raise TypeError("All elements of the input list must be lists.")
-
-    # Get length of the first sublist to use as a reference
-    # This assumes list_of_lists is not empty, which is checked above.
-    first_len = len(list_of_lists[0])
-
-    if not all(len(sublist) == first_len for sublist in list_of_lists):
-        raise ValueError("All sublists must have the same length.")
-
-    if first_len == 0:  # All sublists are empty
-        return []
-
-    # Transpose using zip and then flatten
-    return list(itertools.chain.from_iterable(zip(*list_of_lists)))
-
-
-
-
-def tree_map(fn: Callable[[Tensor], Any], tree: Any) -> None:
-    """
-    Recursively applies a function `fn` to all Tensors found within a nested
-    data structure `tree` which can consist of dictionaries, lists, and tuples.
-
-    This function does NOT return a new data structure. It traverses the
-    input `tree` and applies `fn` to each Tensor encountered. If `fn`
-    modifies tensors in-place, the original `tree` will be modified.
-    The return value of `fn` is ignored by `tree_map`.
-
-    Args:
-        fn: A function that takes a `torch.Tensor` as input. Its return
-            value is disregarded.
-        tree: The nested data structure (e.g., dict, list, tuple) to traverse.
-              It can contain Tensors or other nested structures.
-    """
-    if isinstance(tree, dict):
-        for key in tree:
-            tree_map(fn, tree[key])  # Recurse on values
-    elif isinstance(tree, list) or isinstance(tree, tuple):
-        # For lists, if fn modifies tensors in-place, the list's elements are changed.
-        # For tuples, elements can be modified if they are mutable (like tensors that fn changes in-place).
-        for item in tree:
-            tree_map(fn, item)
-    elif isinstance(tree, Tensor):
-        fn(tree)  # Apply fn. Its return value is ignored.
-    # If tree is of any other type, it's ignored, and the function implicitly returns None.
-
+    else:
+        raise ValueError(f"Unsupported type: {type(first)}")
 
 if __name__ == "__main__":
     labels = np.array([[1, 0, 3, 2, 4], [1, 0, 0, 1, 2]])

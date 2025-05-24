@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 import torch.nn.functional as F
 from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output, OutputClass, Algorithm, Feature, NumNodes, NumSteps
-from .utils import log_sinkhorn, Linear, batch_mask, expand, POS_INF, NEG_INF
+from .utils import log_sinkhorn, Linear, batch_mask, expand, POS_INF, NEG_INF, tree_map_list
 from .processors import GraphFeatures, ProcessorBase
 
 _USE_NUM_NODES_FOR_LOSS_AND_EVAL = True  # This is just used for testing. Keep it to True for all practical purposes.
@@ -1015,25 +1015,6 @@ class AlgoModel(torch.nn.Module):
         if end_step is None:
             return {k: v[start_step] for k, v in hints.items()}
         return {k: v[start_step:end_step] for k, v in hints.items()}
-      
-    @staticmethod
-    def append_step_hints(hints: Hints, step_hints: Hints) -> Hints:
-        for k in step_hints:
-            hint_k_data = step_hints[k].unsqueeze(0) # Add the time dimension
-            if k in hints:
-                hint_k_data = torch.cat([hints[k], hint_k_data], dim=0)
-            hints[k] = hint_k_data
-        return hints
-    
-    @staticmethod
-    def stack_step_prediction(step_prediction: List[Union[Hints, Output]]) -> Union[Hints, Output]:
-        stacked_step_prediction = {}
-        for key in step_prediction[0]:
-            data = []
-            for i in range(len(step_prediction)):
-                data.append(step_prediction[i][key])
-            stacked_step_prediction[key] = torch.stack(data, dim=0)
-        return stacked_step_prediction
 
     def teacher_force(self, orig_hints: Hints, predicted_hints: Hints) -> Hints:
         if self.hint_teacher_forcing == 1.0:
@@ -1108,12 +1089,12 @@ class AlgoModel(torch.nn.Module):
             raw_predicted_outputs.append(last_raw_predictions[Stage.OUTPUT])
 
         raw_predictions = {
-            Stage.HINT: self.stack_step_prediction(raw_predicted_hints),
-            Stage.OUTPUT: self.stack_step_prediction(raw_predicted_outputs)
+            Stage.HINT: tree_map_list(lambda x: torch.stack(x, dim=0), raw_predicted_hints),
+            Stage.OUTPUT: tree_map_list(lambda x: torch.stack(x, dim=0), raw_predicted_outputs)
         }
         predictions = {
-            Stage.HINT: self.stack_step_prediction(predicted_hints),
-            Stage.OUTPUT: self.stack_step_prediction(predicted_outputs)
+            Stage.HINT: tree_map_list(lambda x: torch.stack(x, dim=0), predicted_hints),
+            Stage.OUTPUT: tree_map_list(lambda x: torch.stack(x, dim=0), predicted_outputs)
         }
             
         return raw_predictions, predictions, model_state

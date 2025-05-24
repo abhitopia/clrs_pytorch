@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 import torch.nn.functional as F
 from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output, OutputClass, Algorithm, Feature, NumNodes, NumSteps
-from .utils import log_sinkhorn, Linear, batch_mask, expand, POS_INF, NEG_INF, tree_map_list
+from .utils import log_sinkhorn, Linear, batch_mask, expand, POS_INF, NEG_INF, tree_map, tree_map_list
 from .processors import GraphFeatures, ProcessorBase
 
 _USE_NUM_NODES_FOR_LOSS_AND_EVAL = True  # This is just used for testing. Keep it to True for all practical purposes.
@@ -898,7 +898,6 @@ class AlgoDecoder(nn.ModuleDict):
         return raw_output, output
 
 
-
 class ModelState(NamedTuple):
     processor_state: Tensor
     lstm_state: Optional[LSTMState] = None
@@ -917,7 +916,6 @@ class ModelState(NamedTuple):
         return ModelState(processor_state=self.processor_state.clone().detach().requires_grad_(True),
                           lstm_state=self.lstm_state.clone().detach().requires_grad_(True) if self.lstm_state is not None else None,
                           last_predicted_hint=detached_hints)
-
 
 class AlgoModel(torch.nn.Module):
     def __init__(self, 
@@ -965,6 +963,53 @@ class AlgoModel(torch.nn.Module):
 
         return model_state
 
+    @staticmethod
+    def get_hint_at_step(hints: Hints, start_step: int, end_step: Optional[int] = None) -> Hints:
+        if end_step is None:
+            return tree_map(lambda x: x[start_step], hints)
+        return tree_map(lambda x: x[start_step:end_step], hints)
+
+    def teacher_force(self, orig_hints: Hints, predicted_hints: Hints) -> Hints:
+        if self.hint_teacher_forcing == 1.0:
+            return orig_hints
+        
+        if not self.training or self.hint_teacher_forcing == 0.0:
+            # For inference, use the predicted features from the previous step
+            return predicted_hints
+        
+        hints = {}
+        for name, data in orig_hints.items():
+            batch_size = data.shape[0]
+            target_mask_shape = (batch_size,) + (1,) * (data.dim() - 1)
+            teacher_forcing_probability = torch.full(target_mask_shape, self.hint_teacher_forcing)
+            teacher_forcing_mask = torch.bernoulli(teacher_forcing_probability).bool()
+            data = torch.where(teacher_forcing_mask, data, predicted_hints[name])
+            hints[name] = data
+
+        return hints
+
+    def init_model_state(self, feature: Feature) -> ModelState:
+        trajectory, num_steps = feature[0], feature[1]
+        hint_at_step0 = self.get_hint_at_step(trajectory[Stage.HINT], start_step=0)
+        device = num_steps.device
+        batch_size = num_steps.shape[0]
+        nb_nodes = trajectory[Stage.INPUT]['pos'].shape[1]
+        return ModelState.init(
+            batch_size=batch_size,
+            nb_nodes=nb_nodes,
+            hidden_dim=self.hidden_dim,
+            use_lstm=self.use_lstm,
+            device=device,
+            last_predicted_hint=hint_at_step0
+        )
+        
+    @staticmethod 
+    def extract_last_step(output: Output, num_steps: NumSteps) -> Output:
+        B = num_steps.shape[0]
+        last_step  = num_steps - 1      # shape (B,)        
+        batch_idx = torch.arange(B, device=num_steps.device)
+        return tree_map(lambda x: x[last_step, batch_idx], output)
+    
     def step(self, 
              input: Input, 
              step_hint: Hints, 
@@ -1008,57 +1053,6 @@ class AlgoModel(torch.nn.Module):
         raw_prediction = {Stage.HINT: raw_predicted_hints, Stage.OUTPUT: raw_predicted_output}
         return raw_prediction, prediction, nxt_model_state
     
-    @staticmethod
-    def get_hint_at_step(hints: Hints, start_step: int, end_step: Optional[int] = None) -> Hints:
-        if len(hints) == 0:
-            return {}
-        if end_step is None:
-            return {k: v[start_step] for k, v in hints.items()}
-        return {k: v[start_step:end_step] for k, v in hints.items()}
-
-    def teacher_force(self, orig_hints: Hints, predicted_hints: Hints) -> Hints:
-        if self.hint_teacher_forcing == 1.0:
-            return orig_hints
-        
-        if not self.training or self.hint_teacher_forcing == 0.0:
-            # For inference, use the predicted features from the previous step
-            return predicted_hints
-        
-        hints = {}
-        for name, data in orig_hints.items():
-            batch_size = data.shape[0]
-            target_mask_shape = (batch_size,) + (1,) * (data.dim() - 1)
-            teacher_forcing_probability = torch.full(target_mask_shape, self.hint_teacher_forcing)
-            teacher_forcing_mask = torch.bernoulli(teacher_forcing_probability).bool()
-            data = torch.where(teacher_forcing_mask, data, predicted_hints[name])
-            hints[name] = data
-
-        return hints
-
-    def init_model_state(self, feature: Feature) -> ModelState:
-        trajectory, num_steps = feature[0], feature[1]
-        hint_at_step0 = self.get_hint_at_step(trajectory[Stage.HINT], start_step=0)
-        device = num_steps.device
-        batch_size = num_steps.shape[0]
-        nb_nodes = trajectory[Stage.INPUT]['pos'].shape[1]
-        return ModelState.init(
-            batch_size=batch_size,
-            nb_nodes=nb_nodes,
-            hidden_dim=self.hidden_dim,
-            use_lstm=self.use_lstm,
-            device=device,
-            last_predicted_hint=hint_at_step0
-        )
-        
-    @staticmethod 
-    def extract_last_step(output: Output, num_steps: NumSteps) -> Output:
-        B = num_steps.shape[0]
-        last_step  = num_steps - 1      # shape (B,)        
-        batch_idx = torch.arange(B, device=num_steps.device)
-        extracted_output: Output = {}
-        for k, data in output.items():
-            extracted_output[k] = data[last_step, batch_idx]
-        return extracted_output
     
     def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, model_state: ModelState) -> Tuple[Trajectory, Trajectory, ModelState]:
         max_steps = next(iter(hints.values())).shape[0]

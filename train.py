@@ -42,7 +42,7 @@ def main(
     sizes: List[int] = typer.Option([4, 7, 11, 13, 16], "--sizes", "-s", help="Sizes to train, max value is used for validation"),
     batch_size: int = typer.Option(32, "--batch-size", "-b", help="Batch size"),
     num_train_batches: int = typer.Option(10000, "--num-train-batches", "-t", help="Number of training batches per algorithm"),
-    num_val_batches: int = typer.Option(10, "--num-val-batches", "-v", help="Number of validation batches per algorithm"),
+    num_val_batches: int = typer.Option(50, "--num-val-batches", "-v", help="Number of validation batches per algorithm"),
     chunk_size: int = typer.Option(16, "--chunk-size", "--cs", help="The maximum number of hint steps per batch, <0 means no chunking"),
     run_name: str = typer.Option("run", "--run-name", "-r", help="Run name"),
     project_name: str = typer.Option("clrs", "--project-name", "-p", help="Project name"),
@@ -55,7 +55,7 @@ def main(
     no_random_pos_embedding: bool = typer.Option(False, "--no-random-pos-embedding", "-NRPE", help="Don't use Randomize position embedding", is_flag=True, flag_value=True),
     compile: bool = typer.Option(False, "--compile", "-C", help="Compile model", is_flag=True, flag_value=True),
     debug: bool = typer.Option(False, "--debug", "-D", help="Debug mode", is_flag=True, flag_value=True),
-    val_check_interval: int = typer.Option(500, "--val-check-interval", "-vci", help="Validation check interval"),
+    val_check_interval: int = typer.Option(1000, "--val-check-interval", "-vci", help="Validation check interval"),
 ) -> None:    
     if stacked:
         assert len(algos) > 1, "Stacked training requires at least two algorithms"

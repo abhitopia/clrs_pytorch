@@ -1185,7 +1185,7 @@ class Model(torch.nn.Module):
                                                             dropout=dropout))
             
     def compile(self):
-        #     torch._dynamo.config.cache_size_limit = 256
+        torch._dynamo.config.cache_size_limit = 256
         for name, mod in self.models.items():
             fullgraph = True
             spec = self.models[name].spec

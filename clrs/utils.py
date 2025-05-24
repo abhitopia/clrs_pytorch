@@ -186,7 +186,6 @@ def tree_flatten(struct: NestedTensors) -> List[torch.Tensor]:
     tree_map(lambda x: flat_list.append(x), struct)
     return flat_list
 
-
 def tree_map_list(fn: Callable[[List[torch.Tensor]], torch.Tensor], structs: Sequence[NestedTensors]) -> NestedTensors:
     """
     Given a list of identical nested-structures `structs`,
@@ -224,6 +223,71 @@ def tree_map_list(fn: Callable[[List[torch.Tensor]], torch.Tensor], structs: Seq
 
     else:
         raise ValueError(f"Unsupported type: {type(first)}")
+
+def tree_sort(struct: NestedTensors) -> NestedTensors:
+    """
+    Return a copy of `struct` where all dicts have their keys in sorted order.
+    Recurses into lists and tuples unchanged.
+    """
+    if isinstance(struct, dict):
+        # sort the keys, recurse on each value
+        return {k: tree_sort(struct[k]) for k in sorted(struct)}
+    elif isinstance(struct, list):
+        return [tree_sort(v) for v in struct]
+    elif isinstance(struct, tuple):
+        return tuple(tree_sort(v) for v in struct)
+    elif isinstance(struct, torch.Tensor):
+        return struct
+    else:
+        raise ValueError(f"Unsupported type: {type(struct)}")
+
+def tree_binary_op(fn: Callable[[Any, Any], Any], a: NestedTensors, b: NestedTensors) -> NestedTensors:
+    """
+    Recurse through a and b (which must have the same structure),
+    applying `fn(a_leaf, b_leaf)` at each Tensor leaf and
+    preserving the outer dict/list/tuple structure.
+    """
+    # 1) Tensors
+    if isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor):
+        return fn(a, b)
+    # 2) Dicts
+    elif isinstance(a, dict) and isinstance(b, dict):
+        if set(a.keys()) != set(b.keys()):
+            raise ValueError(f"Dict keys differ: {set(a)} vs {set(b)}")
+        # keep insertion order / sort if you like
+        return {k: tree_binary_op(fn, a[k], b[k]) for k in a.keys()}
+
+    # 3) Lists
+    elif isinstance(a, list) and isinstance(b, list):
+        if len(a) != len(b):
+            raise ValueError(f"List lengths differ: {len(a)} vs {len(b)}")
+        return [tree_binary_op(fn, x, y) for x, y in zip(a, b)]
+
+    # 4) Tuples
+    elif isinstance(a, tuple) and isinstance(b, tuple):
+        if len(a) != len(b):
+            raise ValueError(f"Tuple lengths differ: {len(a)} vs {len(b)}")
+        return tuple(tree_binary_op(fn, x, y) for x, y in zip(a, b))
+    else:
+        raise ValueError(f"Unsupported type: {type(a)}")
+
+def tree_equal(a: NestedTensors, b: NestedTensors, *, atol=0., rtol=0.) -> bool:
+    """
+    Returns the nested-structure of booleans or small tensors
+    indicating leafwise comparison results.
+    """
+    def cmp(x: torch.Tensor, y: torch.Tensor):
+        if atol == 0 and rtol == 0:
+            # returns a single bool
+            return torch.tensor(torch.equal(x, y))
+        else:
+            # returns a single bool
+            return torch.tensor(torch.allclose(x, y, atol=atol, rtol=rtol))
+
+    bool_tree = tree_binary_op(cmp, a, b)
+    flat_bool_tree = tree_flatten(bool_tree)
+    return torch.stack(flat_bool_tree).all()
+
 
 if __name__ == "__main__":
     labels = np.array([[1, 0, 3, 2, 4], [1, 0, 0, 1, 2]])

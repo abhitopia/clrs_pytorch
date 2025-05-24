@@ -107,10 +107,11 @@ for batch_idx, (feature, is_first, is_last) in enumerate(dl):
     (predictions, losses, evaluations), next_model_state = model(feature, prev_model_state)
     prev_model_state = set_model_state(prev_model_state, is_last, next_model_state)
     flat_losses = tree_flatten(losses)
+    flat_evaluations = tree_flatten(evaluations)
     total_loss = sum(flat_losses)
 
     print("Forwards Pass done!")
-    print(f"Batch {batch_idx} loss: {total_loss}")
+    print(f"Batch {batch_idx} loss: {total_loss} eval: {sum(flat_evaluations)}")
     total_loss.backward()
     optimizer.step()
     print("Backwards Pass done!")

@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 import torch.nn.functional as F
 from .specs import Location, Type, Spec, Stage, Trajectory, Hints, Input, Output, OutputClass, Algorithm, Feature, NumNodes, NumSteps
-from .utils import log_sinkhorn, Linear, batch_mask, expand, POS_INF, NEG_INF, tree_map, tree_map_list
+from .utils import log_sinkhorn, Linear, batch_mask, expand, POS_INF, NEG_INF, tree_map, tree_map_list, tree_flatten, tree_sort, tree_equal
 from .processors import GraphFeatures, ProcessorBase
 
 _USE_NUM_NODES_FOR_LOSS_AND_EVAL = True  # This is just used for testing. Keep it to True for all practical purposes.
@@ -782,18 +782,18 @@ class AlgoLoss(nn.Module):
                 self.loss[Stage.OUTPUT].add_module(name, Loss(type_, stage))
             elif stage == Stage.HINT and self.decode_hints:
                 self.loss[Stage.HINT].add_module(name, Loss(type_, stage))
-    
-    def hint_loss(self, prediction: Hints, target: Hints, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Hints:
-        losses = {}
-        if self.decode_hints:
-            for name, loss in self.loss[Stage.HINT].items():
-                losses[name] = loss(prediction[name], target[name], steps, num_nodes)
-        return losses
 
-    def output_loss(self, prediction: Output, target: Output, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Output:
-        losses = {}
+
+    def forward(self, prediction: Trajectory, target: Trajectory, steps: Tensor, num_nodes: Optional[Tensor] = None) -> Trajectory:
+        losses: Trajectory = {Stage.OUTPUT: {}}
+
         for name, loss in self.loss[Stage.OUTPUT].items():
-            losses[name] = loss(prediction[name], target[name], steps, num_nodes)
+            losses[Stage.OUTPUT][name] = loss(prediction[Stage.OUTPUT][name], target[Stage.OUTPUT][name], steps, num_nodes)
+
+        if self.decode_hints:
+            losses[Stage.HINT] = {}
+            for name, loss in self.loss[Stage.HINT].items():
+                losses[Stage.HINT][name] = loss(prediction[Stage.HINT][name], target[Stage.HINT][name], steps, num_nodes)
         return losses
 
 class AlgoEncoder(nn.ModuleDict):
@@ -1091,6 +1091,24 @@ class AlgoModel(torch.nn.Module):
                                                                     num_nodes=num_nodes, 
                                                                     model_state=prev_model_state)
         
+        target: Trajectory = {
+            Stage.OUTPUT: output,
+            # first target hint is never predicted
+            Stage.HINT: self.get_hint_at_step(hints, start_step=1, end_step=max_steps),
+        }
+
+        raw_prediction = { 
+            Stage.OUTPUT: self.extract_last_step(raw_predictions[Stage.OUTPUT], num_steps),
+            # predicted hints go from T=1 to T=max_steps
+            Stage.HINT: self.get_hint_at_step(raw_predictions[Stage.HINT], start_step=0, end_step=max_steps-1)
+        }
+
+        prediction = {
+            Stage.OUTPUT: self.extract_last_step(predictions[Stage.OUTPUT], num_steps),
+            # predicted hints go from T=1 to T=max_steps
+            Stage.HINT: self.get_hint_at_step(predictions[Stage.HINT], start_step=0, end_step=max_steps-1)
+        }
+        
         raw_predictions[Stage.OUTPUT] = self.extract_last_step(raw_predictions[Stage.OUTPUT], num_steps)
         predictions[Stage.OUTPUT] = self.extract_last_step(predictions[Stage.OUTPUT], num_steps)
 
@@ -1100,17 +1118,10 @@ class AlgoModel(torch.nn.Module):
         raw_predictions[Stage.HINT] = self.get_hint_at_step(raw_predictions[Stage.HINT], start_step=0, end_step=max_steps-1)
         predictions[Stage.HINT] = self.get_hint_at_step(predictions[Stage.HINT], start_step=0, end_step=max_steps-1)
 
-        hint_loss = self.loss.hint_loss(prediction=raw_predictions[Stage.HINT], target=target_hints, steps=num_steps, num_nodes=num_nodes)
         hint_evaluations = self.evaluator.evaluate_hints(prediction=predictions[Stage.HINT], target=target_hints, steps=num_steps, num_nodes=num_nodes)
-        
-        output_loss = self.loss.output_loss(prediction=raw_predictions[Stage.OUTPUT], target=output, steps=num_steps, num_nodes=num_nodes)
         output_evaluations = self.evaluator.evaluate_output(prediction=predictions[Stage.OUTPUT], target=output, steps=num_steps, num_nodes=num_nodes)
 
-        losses = {
-            Stage.HINT: hint_loss,
-            Stage.OUTPUT: output_loss
-        }
-
+        losses = self.loss(prediction=raw_prediction, target=target, steps=num_steps, num_nodes=num_nodes)
         evaluations = {
             Stage.HINT: hint_evaluations,
             Stage.OUTPUT: output_evaluations

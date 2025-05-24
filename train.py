@@ -50,11 +50,13 @@ def main(
     seed: int = typer.Option(42, "--seed", help="Seed"),
     dynamic_batch_size: bool = typer.Option(False, "--dynamic-batch-size", "-DB", help="Use non-static batch size", is_flag=True, flag_value=True),
     stacked: bool = typer.Option(False, "--stacked", "-S", help="Stacked training", is_flag=True, flag_value=True),
+    no_static_hints_as_input: bool = typer.Option(False, "--no-static-hints-as-input", "-NSHAI", help="Don't move static hints to input", is_flag=True, flag_value=True),
+    sorting_output_as_permutation: bool = typer.Option(False, "--sorting-output-as-permutation", "-SOAP", help="Sorting output as permutation", is_flag=True, flag_value=True),
+    no_random_pos_embedding: bool = typer.Option(False, "--no-random-pos-embedding", "-NRPE", help="Don't use Randomize position embedding", is_flag=True, flag_value=True),
     compile: bool = typer.Option(False, "--compile", "-C", help="Compile model", is_flag=True, flag_value=True),
     debug: bool = typer.Option(False, "--debug", "-D", help="Debug mode", is_flag=True, flag_value=True),
     val_check_interval: int = typer.Option(500, "--val-check-interval", "-vci", help="Validation check interval"),
-) -> None:
-    
+) -> None:    
     if stacked:
         assert len(algos) > 1, "Stacked training requires at least two algorithms"
         
@@ -68,6 +70,9 @@ def main(
         chunk_size=chunk_size,
         train_batches=num_train_batches,
         val_batches=num_val_batches,
+        random_pos_embedding=not no_random_pos_embedding,
+        static_hints_as_input=not no_static_hints_as_input,
+        sorting_output_as_permutation=sorting_output_as_permutation,
     )
 
     print("Config:", config.to_dict())

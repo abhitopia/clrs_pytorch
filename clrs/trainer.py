@@ -31,6 +31,11 @@ class TrainerConfig:
     batch_size: int = 32                                    # Number of samples per batch
     seed: int = 42                                          # Random seed used for data generation
 
+    # Argorithm Kwargs
+    random_pos_embedding: bool = True                      # Randomize position embedding (Paper default is True)
+    static_hints_as_input: bool = True                     # Move static hints to input (Paper default is True)
+    sorting_output_as_permutation: bool = False            # Sorting output as permutation (Paper default is True but it is extremely slow because of log_sinkhorn)
+
     # Optimizer Settings
     learning_rate: float = 1e-3
 
@@ -71,6 +76,12 @@ class TrainerConfig:
         num_batches = self.train_batches if split == Split.TRAIN else self.val_batches
         algo_datasets = []
 
+        algo_kwargs = {
+            "random_pos_embedding": self.random_pos_embedding,
+            "static_hints_as_input": self.static_hints_as_input,
+            "sorting_output_as_permutation": self.sorting_output_as_permutation
+        }
+
         for algorithm in self.algorithms:
             algo_sizes = self.sizes
 
@@ -92,7 +103,7 @@ class TrainerConfig:
                                                 num_batches=num_batches,
                                                 seed=seed,
                                                 static_batch_size=self.static_batch_size,
-                                                algo_kwargs={}))    
+                                                algo_kwargs=algo_kwargs))    
             
         dataset = StackedAlgoFeatureDataset(algo_datasets) if self.stacked else CyclicAlgoFeatureDataset(algo_datasets)
         return dataset.get_dataloader(num_workers=num_workers)

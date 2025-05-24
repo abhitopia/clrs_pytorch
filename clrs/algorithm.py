@@ -13,18 +13,18 @@ from . import algorithms
 
 class AlgorithmSampler(abc.ABC):
     def __init__(self, name: Union[str, Algorithm], seed: int=42, 
-                 randomize_pos: bool=True, 
-                 move_predh_to_input: bool=True, 
-                 enforce_permutations: bool=True, 
+                 random_pos_embedding: bool=True, 
+                 static_hints_as_input: bool=True, 
+                 sorting_output_as_permutation: bool=True, 
                  max_steps: Optional[int] = None,
                  **sampler_kwargs):
         assert name in CLRS30Algorithms, f"Algorithm {name} not in {CLRS30Algorithms}"
         self._name = name
         self._runner: Callable = None
         self._seed = seed
-        self._randomize_pos = randomize_pos
-        self._move_predh_to_input = move_predh_to_input
-        self._enforce_permutations = enforce_permutations
+        self._randomize_pos = random_pos_embedding
+        self._move_predh_to_input = static_hints_as_input
+        self._enforce_permutations = sorting_output_as_permutation
         self._spec = None
         self._max_steps = max_steps
         self._rng = np.random.RandomState(seed)

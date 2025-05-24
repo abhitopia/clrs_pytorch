@@ -1,6 +1,5 @@
 from enum import Enum
-import types
-from typing import Callable, Dict, List, Optional, Tuple, NamedTuple
+from typing import Dict, List, Optional, Tuple, NamedTuple, Union
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -1027,15 +1026,14 @@ class AlgoModel(torch.nn.Module):
         return hints
     
     @staticmethod
-    def stack_step_hints(step_hints: List[Hints]) -> Hints:
-        new_step_hints = {}
-        for key in step_hints[0]:
+    def stack_step_prediction(step_prediction: List[Union[Hints, Output]]) -> Union[Hints, Output]:
+        stacked_step_prediction = {}
+        for key in step_prediction[0]:
             data = []
-            for i in range(len(step_hints)):
-                data.append(step_hints[i][key])
-            new_step_hints[key] = torch.stack(data, dim=0)
-        return new_step_hints
-
+            for i in range(len(step_prediction)):
+                data.append(step_prediction[i][key])
+            stacked_step_prediction[key] = torch.stack(data, dim=0)
+        return stacked_step_prediction
 
     def teacher_force(self, orig_hints: Hints, predicted_hints: Hints) -> Hints:
         if self.hint_teacher_forcing == 1.0:
@@ -1056,17 +1054,6 @@ class AlgoModel(torch.nn.Module):
 
         return hints
 
-    def merge_predicted_output(self, output: Output, predicted_output: Output, not_done_mask: Tensor) -> Output:
-        for k, data in predicted_output.items():
-            if k not in output:
-                output[k] = data
-            else:
-                target_mask_shape = (not_done_mask.shape[0],) + (1,) * (data.dim() - 1)
-                keep_prediction = not_done_mask.view(target_mask_shape)
-                output[k] = torch.where(keep_prediction, predicted_output[k], output[k])
-        return output
-    
-
     def init_model_state(self, feature: Feature) -> ModelState:
         trajectory, num_steps = feature[0], feature[1]
         hint_at_step0 = self.get_hint_at_step(trajectory[Stage.HINT], start_step=0)
@@ -1081,8 +1068,18 @@ class AlgoModel(torch.nn.Module):
             device=device,
             last_predicted_hint=hint_at_step0
         )
+        
+    @staticmethod 
+    def extract_last_step(output: Output, num_steps: NumSteps) -> Output:
+        B = num_steps.shape[0]
+        last_step  = num_steps - 1      # shape (B,)        
+        batch_idx = torch.arange(B, device=num_steps.device)
+        extracted_output: Output = {}
+        for k, data in output.items():
+            extracted_output[k] = data[last_step, batch_idx]
+        return extracted_output
     
-    def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, num_steps: Tensor, model_state: ModelState) -> Tuple[Trajectory, Trajectory, ModelState]:
+    def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, model_state: ModelState) -> Tuple[Trajectory, Trajectory, ModelState]:
         max_steps = next(iter(hints.values())).shape[0]
          # Disable the loop as it makes the computational graph too large for torch.compile
 
@@ -1090,9 +1087,8 @@ class AlgoModel(torch.nn.Module):
         predicted_hints: List[Hints] = []
         raw_predicted_hints: List[Hints] = []
 
-        # Output
-        predicted_output: Output = {}
-        raw_predicted_output: Output = {}
+        predicted_outputs: List[Output] = []
+        raw_predicted_outputs: List[Output] = []
         
         for step_idx in range(max_steps):
             orig_hints_at_step = self.get_hint_at_step(hints, step_idx)
@@ -1108,22 +1104,16 @@ class AlgoModel(torch.nn.Module):
             # Set the last predicted hints to the predicted hints of the current step
             predicted_hints.append(last_predictions[Stage.HINT])
             raw_predicted_hints.append(last_raw_predictions[Stage.HINT])
-
-            not_done_mask = num_steps > (step_idx + 1)
-            predicted_output = self.merge_predicted_output(output=predicted_output, 
-                                                        predicted_output=last_predictions[Stage.OUTPUT], 
-                                                        not_done_mask=not_done_mask)
-            raw_predicted_output = self.merge_predicted_output(output=raw_predicted_output, 
-                                                    predicted_output=last_raw_predictions[Stage.OUTPUT], 
-                                                    not_done_mask=not_done_mask)
+            predicted_outputs.append(last_predictions[Stage.OUTPUT])
+            raw_predicted_outputs.append(last_raw_predictions[Stage.OUTPUT])
 
         raw_predictions = {
-            Stage.HINT: self.stack_step_hints(raw_predicted_hints),
-            Stage.OUTPUT: raw_predicted_output
+            Stage.HINT: self.stack_step_prediction(raw_predicted_hints),
+            Stage.OUTPUT: self.stack_step_prediction(raw_predicted_outputs)
         }
         predictions = {
-            Stage.HINT: self.stack_step_hints(predicted_hints),
-            Stage.OUTPUT: predicted_output
+            Stage.HINT: self.stack_step_prediction(predicted_hints),
+            Stage.OUTPUT: self.stack_step_prediction(predicted_outputs)
         }
             
         return raw_predictions, predictions, model_state
@@ -1139,8 +1129,11 @@ class AlgoModel(torch.nn.Module):
         raw_predictions, predictions, nxt_model_state = self._loop(input=input, 
                                                                     hints=hints, 
                                                                     num_nodes=num_nodes, 
-                                                                    num_steps=num_steps,
                                                                     model_state=prev_model_state)
+        
+        raw_predictions[Stage.OUTPUT] = self.extract_last_step(raw_predictions[Stage.OUTPUT], num_steps)
+        predictions[Stage.OUTPUT] = self.extract_last_step(predictions[Stage.OUTPUT], num_steps)
+
         # first target hint is never predicted
         # predicted hints are shifted by one step, and the first predicted hint is actually second target hint
         target_hints = self.get_hint_at_step(hints, start_step=1, end_step=max_steps)

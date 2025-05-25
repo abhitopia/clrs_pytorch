@@ -46,6 +46,7 @@ def main(
     sorting_output_as_permutation: bool = typer.Option(False, "--sorting-output-as-permutation", "-SOAP", help="Sorting output as permutation", is_flag=True, flag_value=True),
     no_random_pos_embedding: bool = typer.Option(False, "--no-random-pos-embedding", "-NRPE", help="Don't use Randomize position embedding", is_flag=True, flag_value=True),
     compile: bool = typer.Option(False, "--compile", "-C", help="Compile model", is_flag=True, flag_value=True),
+    eval_only: bool = typer.Option(False, "--eval-only", "-E", help="Evaluate only", is_flag=True, flag_value=True),
     debug: bool = typer.Option(False, "--debug", "-D", help="Debug mode", is_flag=True, flag_value=True),
     val_check_interval: int = typer.Option(1000, "--val-check-interval", "-vci", help="Validation check interval"),
 ) -> None:    
@@ -60,7 +61,7 @@ def main(
     
     if stacked:
         assert len(algos) > 1, "Stacked training requires at least two algorithms"
-        
+
     config = TrainerConfig(
         algorithms=algos,
         sizes=sizes,
@@ -84,7 +85,8 @@ def main(
         checkpoint_dir=ckpt_dir,
         ckpt_path=ckpt_path,
         compile=compile,
-        debug=debug
+        debug=debug,
+        eval_only=eval_only
     )
 
 if __name__ == "__main__":

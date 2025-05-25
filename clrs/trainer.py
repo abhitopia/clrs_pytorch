@@ -22,6 +22,7 @@ from rich import print
 class Split(str, Enum):
     TRAIN = "train"
     VAL = "val"
+    TEST = "test"
 
 @dataclass
 class TrainerConfig:
@@ -81,7 +82,7 @@ class TrainerConfig:
             self.num_train_steps = self.train_batches
 
     def get_dataloader(self, split: Split, num_workers: int = 0):
-        seed = self.seed + (1 if split == Split.VAL else 0)
+        seed = self.seed + (1 if split == Split.VAL else 2 if split == Split.TEST else 0)
         num_batches = self.train_batches if split == Split.TRAIN else self.val_batches
         algo_datasets = []
 
@@ -96,8 +97,10 @@ class TrainerConfig:
         for algorithm in self.algorithms:
             algo_sizes = self.sizes
 
-            if split == "val":
+            if split == Split.VAL:
                 algo_sizes = [max(algo_sizes)]
+            elif split == Split.TEST:
+                algo_sizes = 4 * [max(algo_sizes)]  # 4 times OOD generalization test
 
             # As per the generalise algorithmic learner paper, we replace the max length with 5/4 of the max length for 
             # string matching algorithms for training. For validation, we use the max length.
@@ -361,11 +364,15 @@ def train(config: TrainerConfig,
           val_check_interval: int = 1000,
           wandb_logging: bool = True,
           debug: bool = False,
-          compile: bool = False) -> None:
+          compile: bool = False,
+          eval_only: bool = False) -> None:
 
     num_workers = 0 if debug else min(os.cpu_count() - 2, 8)
     project_name = project_name + "_debug" if debug else project_name
     state_dict = None
+
+    if eval_only:
+        assert ckpt_path is not None, "Checkpoint path is required for evaluation"
 
     if ckpt_path is not None:
         config, state_dict = load_checkpoint(ckpt_path, project_name, checkpoint_dir)
@@ -378,6 +385,7 @@ def train(config: TrainerConfig,
     # Dummy call to get the specs
     train_dl = config.get_dataloader(Split.TRAIN, num_workers=num_workers)
     val_dl = config.get_dataloader(Split.VAL, num_workers=0 if debug else 2)        
+    test_dl = config.get_dataloader(Split.TEST, num_workers=0 if debug else 2)
     model_specs = val_dl.dataset.specs
 
     model = config.get_model(model_specs)
@@ -457,8 +465,12 @@ def train(config: TrainerConfig,
 
     with trainer.init_module():
         model = TrainingModel(model, config)
-        if state_dict is not None:
-            trainer.validate(model, dataloaders=val_dl)
+        if eval_only:
+            trainer.test(model, dataloaders=test_dl)
+            return
+        else:
+            if state_dict is not None:
+                trainer.validate(model, dataloaders=val_dl)
 
     trainer.fit(model, 
                 train_dataloaders=train_dl, 

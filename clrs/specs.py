@@ -51,45 +51,38 @@ class OutputClass(int, Enum):
   MASKED = -1
 
 class Algorithm(str, Enum):
+    activity_selector = 'activity_selector'
+    articulation_points = 'articulation_points'
+    bellman_ford = 'bellman_ford'
+    binary_search = 'binary_search'
+    bipartite_matching = 'bipartite_matching'
+    bubble_sort = 'bubble_sort'
+    bfs = 'bfs'
+    bridges = 'bridges'
+    dag_shortest_paths = 'dag_shortest_paths'
+    dfs = 'dfs'
+    dijkstra = 'dijkstra'
     find_maximum_subarray = 'find_maximum_subarray'
     find_maximum_subarray_kadane = 'find_maximum_subarray_kadane'
-    matrix_chain_order = 'matrix_chain_order'
-    lcs_length = 'lcs_length'
-    optimal_bst = 'optimal_bst'
-
-    segments_intersect = 'segments_intersect'
+    floyd_warshall = 'floyd_warshall'
     graham_scan = 'graham_scan'
+    heapsort = 'heapsort'
+    insertion_sort = 'insertion_sort'
     jarvis_march = 'jarvis_march'
-
-    dfs = 'dfs'
-    bfs = 'bfs'
-    topological_sort = 'topological_sort'
-    articulation_points = 'articulation_points'
-    bridges = 'bridges'
-    strongly_connected_components = 'strongly_connected_components'
+    kmp_matcher = 'kmp_matcher'
+    lcs_length = 'lcs_length'
+    matrix_chain_order = 'matrix_chain_order'
+    minimum = 'minimum'
     mst_kruskal = 'mst_kruskal'
     mst_prim = 'mst_prim'
-    bellman_ford = 'bellman_ford'
-    dijkstra = 'dijkstra'
-    dag_shortest_paths = 'dag_shortest_paths'
-    floyd_warshall = 'floyd_warshall'
-    bipartite_matching = 'bipartite_matching'
-
-    activity_selector = 'activity_selector'
-    task_scheduling = 'task_scheduling'
-
-    minimum = 'minimum'
-    binary_search = 'binary_search'
-    quickselect = 'quickselect'
-
-    insertion_sort = 'insertion_sort'
-    bubble_sort = 'bubble_sort'
-    heapsort = 'heapsort'
-    quicksort = 'quicksort'
-
     naive_string_matcher = 'naive_string_matcher'
-    kmp_matcher = 'kmp_matcher'
-
+    optimal_bst = 'optimal_bst'
+    quickselect = 'quickselect'
+    quicksort = 'quicksort'
+    segments_intersect = 'segments_intersect'
+    strongly_connected_components = 'strongly_connected_components'
+    task_scheduling = 'task_scheduling'
+    topological_sort = 'topological_sort'
 
 CLRS30Algorithms = [algo for algo in Algorithm if algo not in [Algorithm.find_maximum_subarray, Algorithm.bipartite_matching]]
 

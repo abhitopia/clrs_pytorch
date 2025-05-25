@@ -205,7 +205,7 @@ class TrainingModel(pl.LightningModule):
             total_loss = total_loss + loss_algo
             total_len_loss = total_len_loss + len_loss_algo
 
-            # Score
+            # Total Scores Output and Hint
             total_hint_scores = total_hint_scores + hint_score_algo
             total_output_scores = total_output_scores + output_score_algo
             total_len_hint_score = total_len_hint_score + len_hint_score_algo
@@ -216,8 +216,11 @@ class TrainingModel(pl.LightningModule):
 
         loss = total_loss / total_len_loss
         total_metrics[f"total/loss_{split}"] = loss.detach().cpu().item()
-        total_metrics[f"total/hint_score_{split}"] = total_hint_scores / total_len_hint_score
-        total_metrics[f"total/output_score_{split}"] = total_output_scores / total_len_output_score
+        if total_len_hint_score > 0:
+            total_metrics[f"total/hint_score_{split}"] = total_hint_scores / total_len_hint_score
+
+        if total_len_output_score > 0:
+            total_metrics[f"total/output_score_{split}"] = total_output_scores / total_len_output_score
 
         if split == Split.TRAIN:
             total_metrics[f"total/examples_seen"] = sum(self.examples_seen.values())

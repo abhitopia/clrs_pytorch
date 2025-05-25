@@ -382,6 +382,13 @@ def train(config: TrainerConfig,
 
     model = config.get_model(model_specs)
 
+    if state_dict is not None:
+        try:
+            model.load_state_dict(state_dict, strict=True)
+        except Exception as e:
+            print(f"Error loading checkpoint weights: {e}")
+            sys.exit(1)
+
     if compile:
         print("Compiling model using torch.compile...")
         model.compile()
@@ -450,14 +457,8 @@ def train(config: TrainerConfig,
 
     with trainer.init_module():
         model = TrainingModel(model, config)
-
         if state_dict is not None:
-            try:
-                model.load_state_dict(state_dict, strict=True)
-            except Exception as e:
-                print(f"Error loading checkpoint weights: {e}")
-                sys.exit(1)
-        trainer.validate(model, val_dataloaders=val_dl)
+            trainer.validate(model, val_dataloaders=val_dl)
 
     trainer.fit(model, 
                 train_dataloaders=train_dl, 

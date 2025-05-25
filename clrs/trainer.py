@@ -458,7 +458,7 @@ def train(config: TrainerConfig,
     with trainer.init_module():
         model = TrainingModel(model, config)
         if state_dict is not None:
-            trainer.validate(model, val_dataloaders=val_dl)
+            trainer.validate(model, dataloaders=val_dl)
 
     trainer.fit(model, 
                 train_dataloaders=train_dl, 

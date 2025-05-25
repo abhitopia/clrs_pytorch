@@ -170,6 +170,7 @@ class TrainingModel(pl.LightningModule):
         self.batches_seen = defaultdict(int)
         self.train_model_state = {algo: None for algo in self.model.specs.keys()}
         self.val_model_state = {algo: None for algo in self.model.specs.keys()}
+        self.test_model_state = {algo: None for algo in self.model.specs.keys()}
 
     def log_metrics(self, split: Split, evaluations, losses, is_first: Dict[Algorithm, bool], is_last: Dict[Algorithm, bool]):
         total_loss, total_output_scores, total_hint_scores = 0.0, 0.0, 0.0
@@ -291,6 +292,20 @@ class TrainingModel(pl.LightningModule):
     def on_validation_epoch_end(self):
         # reset the model state for validation, this is to ensure that the model state is not carried over from one epoch to the next
         self.val_model_state = {algo: None for algo in self.model.specs.keys()}
+
+    def on_test_batch_start(self, batch, batch_idx, dataloader_idx=0):
+        torch.compiler.cudagraph_mark_step_begin()
+    
+    def test_step(self, batch: DictFeatureBatch, batch_idx: int):
+        features, is_first, is_last = batch
+        model_state = self.get_model_state(Split.TEST, is_first, features)
+        (predictions, losses, evaluations), nxt_model_state = self.model(features, model_state) 
+        self.set_model_state(Split.TEST, is_last, nxt_model_state)
+        _ = self.log_metrics(Split.TEST, evaluations, losses, is_first, is_last)
+
+    def on_test_epoch_end(self):
+        # reset the model state for test, this is to ensure that the model state is not carried over from one epoch to the next
+        self.test_model_state = {algo: None for algo in self.model.specs.keys()}
 
 
     def configure_optimizers(self):

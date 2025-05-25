@@ -6,9 +6,9 @@ import typer
 from clrs.specs import Algorithm, CLRS30Algorithms
 from clrs.trainer import TrainerConfig, train
 import logging
-from rich import print
 import warnings
 import torch._logging as torch_logging
+
 
 
 
@@ -38,6 +38,7 @@ def main(
     run_name: str = typer.Option("run", "--run-name", "-r", help="Run name"),
     project_name: str = typer.Option("clrs", "--project-name", "-p", help="Project name"),
     ckpt_dir: Path = typer.Option("./checkpoints", "--ckpt-dir", help="Checkpoint directory"),
+    ckpt_path: Optional[str] = typer.Option(None, "--ckpt-path", "-cp", help="Checkpoint path"),
     seed: int = typer.Option(42, "--seed", help="Seed"),
     dynamic_batch_size: bool = typer.Option(False, "--dynamic-batch-size", "-DB", help="Use non-static batch size", is_flag=True, flag_value=True),
     stacked: bool = typer.Option(False, "--stacked", "-S", help="Stacked training", is_flag=True, flag_value=True),
@@ -49,6 +50,7 @@ def main(
     val_check_interval: int = typer.Option(1000, "--val-check-interval", "-vci", help="Validation check interval"),
 ) -> None:    
     
+
     if debug:
         # Control the logging to help debug compilation issues
         torch_logging.set_logs(
@@ -74,13 +76,13 @@ def main(
         sorting_output_as_permutation=sorting_output_as_permutation,
     )
 
-    print("Config:", config.to_dict())
     train(
         config=config,
         project_name=project_name,
         run_name=run_name,
         val_check_interval=val_check_interval,
         checkpoint_dir=ckpt_dir,
+        ckpt_path=ckpt_path,
         compile=compile,
         debug=debug
     )

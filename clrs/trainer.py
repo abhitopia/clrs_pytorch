@@ -2,18 +2,22 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 import os
-from typing import Dict, List, Optional, Union
+from pathlib import Path
+import sys
+from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from torch.optim import Adam
 import torch
+import wandb
 from .utils import tree_flatten
-from .trainer_utils import CustomRichProgressBar, ModelCheckpointWithWandbSync
+from .trainer_utils import CustomRichProgressBar, ModelCheckpointWithWandbSync, Artifact
 from .specs import CLRS30Algorithms, Algorithm, Spec, Feature, Stage
 from .processors import Processor
 from .model import Model, ModelState, ReconstMode
 from .dataset import AlgoFeatureDataset, DictFeatureBatch, StackedAlgoFeatureDataset, CyclicAlgoFeatureDataset
+from rich import print
 
 class Split(str, Enum):
     TRAIN = "train"
@@ -57,6 +61,10 @@ class TrainerConfig:
 
     def to_dict(self):
         return {k: v for k, v in asdict(self).items() if not k.startswith("_")}
+    
+    @classmethod
+    def from_dict(cls, d: Dict):
+        return cls(**d)
 
     def __post_init__(self):
         if isinstance(self.algorithms, Algorithm):
@@ -290,10 +298,66 @@ class TrainingModel(pl.LightningModule):
                     weight_decay=0.0)
     
     
+def load_checkpoint(ckpt_path: str, project_name: str, checkpoint_dir: str) -> Tuple[TrainerConfig, Dict]:
+    """Load model weights from a remote artifact.
+    
+    Args:
+        model: The model to load weights into
+        mockpt_pathdel_src: Artifact string in format [project/]run_name/{best|backup}[/{alias|step}] where:
+            - alias can be 'best', 'best-N', 'latest', 'step-NNNNNNN'
+            - step is a positive integer that will be converted to 'step-NNNNNNN' format
+        project_name: Default project name if not specified in model_src
+        checkpoint_dir: Directory to store downloaded checkpoints
+        
+    Raises:
+        ValueError: If artifact cannot be found or loaded
+        SystemExit: If no alias is specified (after displaying available checkpoints)
+
+    Returns:
+        Tuple[TrainerConfig, Dict]: The trainer config and the state dict
+    """
+    try:
+        # Parse model source string first
+        source_project, run_name, category, alias = Artifact.parse_artifact_string(
+            ckpt_path,
+            default_project=project_name
+        )
+        
+        # Initialize artifact manager with correct project and run name
+        artifact_manager = Artifact(
+            entity=wandb.api.default_entity,
+            project_name=source_project,
+            run_name=run_name
+        )
+
+        # Get local checkpoint path
+        checkpoint_path = artifact_manager.get_local_checkpoint(
+            category=category,
+            alias=alias,
+            checkpoint_dir=Path(checkpoint_dir)
+        )
+        
+        # Load just the model weights
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        train_config = TrainerConfig.from_dict(checkpoint['hyper_parameters'])
+        state_dict = checkpoint['state_dict']
+        normalized_state_dict = {}
+        for k, v in state_dict.items():
+            normalized_k = k.replace("_orig_mod.", "")[6:]
+            normalized_state_dict[normalized_k] = v
+
+        return train_config, normalized_state_dict
+        
+    except ValueError as e:
+        print(f"Error loading checkpoint: {e}")
+        sys.exit(1)
+
+
 def train(config: TrainerConfig, 
           run_name: str = 'run_1',
           project_name: str = 'clrs', 
           checkpoint_dir: str = './checkpoints',
+          ckpt_path: Optional[str] = None,
           val_check_interval: int = 1000,
           wandb_logging: bool = True,
           debug: bool = False,
@@ -301,7 +365,14 @@ def train(config: TrainerConfig,
 
     num_workers = 0 if debug else min(os.cpu_count() - 2, 8)
     project_name = project_name + "_debug" if debug else project_name
-    
+    state_dict = None
+
+    if ckpt_path is not None:
+        config, state_dict = load_checkpoint(ckpt_path, project_name, checkpoint_dir)
+        print(f"Overriding config from checkpoint!")
+
+    print("Config:", config.to_dict())
+
     pl.seed_everything(config.seed)
 
     # Dummy call to get the specs
@@ -310,6 +381,7 @@ def train(config: TrainerConfig,
     model_specs = val_dl.dataset.specs
 
     model = config.get_model(model_specs)
+
     if compile:
         print("Compiling model using torch.compile...")
         model.compile()
@@ -378,6 +450,14 @@ def train(config: TrainerConfig,
 
     with trainer.init_module():
         model = TrainingModel(model, config)
+
+        if state_dict is not None:
+            try:
+                model.load_state_dict(state_dict, strict=True)
+            except Exception as e:
+                print(f"Error loading checkpoint weights: {e}")
+                sys.exit(1)
+        trainer.validate(model, val_dataloaders=val_dl)
 
     trainer.fit(model, 
                 train_dataloaders=train_dl, 

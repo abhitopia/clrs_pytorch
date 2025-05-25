@@ -1,3 +1,17 @@
+# Next set of fixes
+- [ ] Fix evaluation
+    - [x] Skip scalar evaluation
+    - [ ] Separate evaluation for hints and scalars
+    - [ ] Ensure per batch element accuracy calculation 
+    - [ ] Ensure that the metrics are logged correctly
+    - [ ] Test Bellman Ford 
+- [ ] Implement Resume
+- [ ] Implement Test/Evaluate
+
+- [ ] Implement sync / async training with separate Cuda streams
+- [ ] Benchmark different training modes
+- [ ] Retrain
+
 # Faster Training
 - [x] Implement static batch size on both hint_steps and num_nodes for each algo dataset
 - [x] Fix evaluator to take the num_steps and apply the mask to the hints

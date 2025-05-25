@@ -53,6 +53,7 @@ class TrainerConfig:
     use_ln: bool = True                                      # Use layer normalization
     nb_heads: int = 1                                        # Number of attention heads (if using GAT variant of GNN)
     mp_steps: int = 1                                        # Number of message passing steps of GNN per hint step
+    skip_scalar_eval: bool = True                            # Skip scalar evaluation
 
     def to_dict(self):
         return {k: v for k, v in asdict(self).items() if not k.startswith("_")}
@@ -132,6 +133,7 @@ class TrainerConfig:
                       use_lstm=self.use_lstm,
                       hint_reconst_mode=self.hint_reconst_mode,
                       hint_teacher_forcing=self.hint_teacher_forcing,
+                      skip_scalar_eval=self.skip_scalar_eval,
                       dropout=self.dropout)
         
         return model

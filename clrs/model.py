@@ -690,7 +690,7 @@ class Evaluator(nn.Module):
             raise ValueError("Invalid type")
         
 class AlgoEvaluator(nn.Module):
-    def __init__(self, spec: Spec, decode_hints: bool):
+    def __init__(self, spec: Spec, decode_hints: bool, skip_scalars: bool = True):
         super().__init__()
         self.spec, self.skip = self.process_spec(spec)
         self.evaluators = nn.ModuleDict()
@@ -700,6 +700,8 @@ class AlgoEvaluator(nn.Module):
             self.evaluators.add_module(Stage.HINT, nn.ModuleDict())
 
         for name, (stage, _, type_, _) in self.spec.items():
+            if skip_scalars and type_ == Type.SCALAR:
+                continue
             if stage == Stage.OUTPUT:
                 self.evaluators[Stage.OUTPUT].add_module(name, Evaluator(type_, stage))
             elif stage == Stage.HINT and self.decode_hints:
@@ -927,6 +929,7 @@ class AlgoModel(torch.nn.Module):
                  use_lstm: bool = True,
                  hint_reconst_mode: ReconstMode = ReconstMode.HARD,
                  hint_teacher_forcing: float = 1.0,
+                 skip_scalar_eval: bool = True,
                  dropout: float = 0.0): 
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -938,7 +941,7 @@ class AlgoModel(torch.nn.Module):
         self.encoder = AlgoEncoder(spec, hidden_dim, encode_hints)
         self.processor = processor
         self.loss = AlgoLoss(spec=spec, decode_hints=decode_hints)
-        self.evaluator = AlgoEvaluator(spec, decode_hints=decode_hints)
+        self.evaluator = AlgoEvaluator(spec, decode_hints=decode_hints, skip_scalars=skip_scalar_eval)
         self.decoder = AlgoDecoder(spec, 
                                 hidden_dim=hidden_dim, 
                                 hint_reconst_mode=hint_reconst_mode,
@@ -1151,6 +1154,7 @@ class Model(torch.nn.Module):
                  use_lstm: bool = True,
                  hint_reconst_mode: ReconstMode = ReconstMode.SOFT,
                  hint_teacher_forcing: float = 0.0,
+                 skip_scalar_eval: bool = True,
                  dropout: float = 0.0):
         super().__init__()
         self.models = nn.ModuleDict()
@@ -1165,6 +1169,7 @@ class Model(torch.nn.Module):
                                                             use_lstm=use_lstm,
                                                             hint_reconst_mode=hint_reconst_mode, 
                                                             hint_teacher_forcing=hint_teacher_forcing, 
+                                                            skip_scalar_eval=skip_scalar_eval,
                                                             dropout=dropout))
             
     def compile(self):

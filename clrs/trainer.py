@@ -337,7 +337,7 @@ def train(config: TrainerConfig,
                 save_top_k=3,
                 mode='max',
                 auto_insert_metric_name=False,
-                filename='best-step{step:07d}-Score:{total/score_val:.4f}-Loss:{total/loss_val:.4f}',
+                filename='best-step{step:07d}-Score:{total/output_score_val:.4f}-Loss:{total/loss_val:.4f}',
                 wandb_verbose=False
             ),
             ModelCheckpointWithWandbSync(
@@ -347,7 +347,7 @@ def train(config: TrainerConfig,
                 save_top_k=2,
                 every_n_train_steps=val_check_interval,
                 auto_insert_metric_name=False,
-                filename='last-step{step:07d}-Score:{total/score_val:.4f}-Loss:{total/loss_val:.4f}',
+                filename='last-step{step:07d}-Score:{total/output_score_val:.4f}-Loss:{total/loss_val:.4f}',
                 wandb_verbose=False
             )
         ])

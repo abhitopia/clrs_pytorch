@@ -159,8 +159,8 @@ class TrainingModel(pl.LightningModule):
         self.val_model_state = {algo: None for algo in self.model.specs.keys()}
 
     def log_metrics(self, split: Split, evaluations, losses, is_first: Dict[Algorithm, bool], is_last: Dict[Algorithm, bool]):
-        total_loss, total_scores = 0.0, 0.0
-        total_len_loss, total_len_score = 0, 0
+        total_loss, total_output_scores, total_hint_scores = 0.0, 0.0, 0.0
+        total_len_loss, total_len_output_score, total_len_hint_score = 0, 0, 0
         algo_metrics, total_metrics = {}, {}
         batch_size = self.config.batch_size
 
@@ -178,10 +178,15 @@ class TrainingModel(pl.LightningModule):
             loss_algo = sum(flat_hints_loss) 
             len_loss_algo = len(flat_hints_loss)
 
-            # Score
-            score_algo = sum(flat_hints_eval).detach().cpu().item()
-            len_score_algo = len(flat_hints_eval)
+            # Hint Score
+            hint_score_algo = sum(flat_hints_eval).detach().cpu().item()
+            len_hint_score_algo = len(flat_hints_eval)
+            algo_metrics[f"{algo}/hint_score_{split}"] = (hint_score_algo / len_hint_score_algo)
 
+
+            # Output score
+            output_score_algo = 0.0
+            len_output_score_algo = 0
 
             if is_last[algo]:
                 flat_outputs_eval = tree_flatten(evaluations[algo][Stage.OUTPUT])
@@ -191,25 +196,28 @@ class TrainingModel(pl.LightningModule):
                 loss_algo = loss_algo + sum(flat_outputs_loss)
                 len_loss_algo = len_loss_algo + len(flat_outputs_loss)
 
-                # Score
-                score_algo = score_algo + sum(flat_outputs_eval).detach().cpu().item()
-                len_score_algo = len_score_algo + len(flat_outputs_eval)
+                # Output Score
+                output_score_algo = output_score_algo + sum(flat_outputs_eval).detach().cpu().item()
+                len_output_score_algo = len_output_score_algo + len(flat_outputs_eval)
+                algo_metrics[f"{algo}/output_score_{split}"] = (output_score_algo / len_output_score_algo)
 
             # Loss
             total_loss = total_loss + loss_algo
             total_len_loss = total_len_loss + len_loss_algo
 
             # Score
-            total_scores = total_scores + score_algo
-            total_len_score = total_len_score + len_score_algo
+            total_hint_scores = total_hint_scores + hint_score_algo
+            total_output_scores = total_output_scores + output_score_algo
+            total_len_hint_score = total_len_hint_score + len_hint_score_algo
+            total_len_output_score = total_len_output_score + len_output_score_algo
 
             algo_metrics[f"{algo}/loss_{split}"] = (loss_algo / len_loss_algo).detach().cpu().item()
-            algo_metrics[f"{algo}/score_{split}"] = (score_algo / len_score_algo)
 
 
         loss = total_loss / total_len_loss
         total_metrics[f"total/loss_{split}"] = loss.detach().cpu().item()
-        total_metrics[f"total/score_{split}"] = total_scores / total_len_score
+        total_metrics[f"total/hint_score_{split}"] = total_hint_scores / total_len_hint_score
+        total_metrics[f"total/output_score_{split}"] = total_output_scores / total_len_output_score
 
         if split == Split.TRAIN:
             total_metrics[f"total/examples_seen"] = sum(self.examples_seen.values())

@@ -1,7 +1,7 @@
 # Next set of fixes
 - [ ] Fix evaluation
     - [x] Skip scalar evaluation
-    - [ ] Separate evaluation for hints and scalars
+    - [x] Separate evaluation for hints and scalars
     - [ ] Ensure per batch element accuracy calculation 
     - [ ] Ensure that the metrics are logged correctly
     - [ ] Test Bellman Ford 
@@ -32,6 +32,8 @@
 - [x] todo: refactor extract_last_step to use tree_map
 - [x] Make chunked training work with compiled model
 - [x] require_gradients may not be needed in the model_state anymore
+
+
 
 
 # Next make the evaluation and loss work

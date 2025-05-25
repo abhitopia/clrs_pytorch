@@ -333,7 +333,7 @@ def train(config: TrainerConfig,
     callbacks.extend([
             ModelCheckpointWithWandbSync(
                 wandb_model_suffix="best",
-                monitor='total/score_val',
+                monitor='total/output_score_val',
                 save_top_k=3,
                 mode='max',
                 auto_insert_metric_name=False,

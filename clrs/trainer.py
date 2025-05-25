@@ -1,9 +1,9 @@
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-import math
 import os
 from typing import Dict, List, Optional, Union
+import numpy as np
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 from torch.optim import Adam
@@ -77,6 +77,8 @@ class TrainerConfig:
         num_batches = self.train_batches if split == Split.TRAIN else self.val_batches
         algo_datasets = []
 
+        rng = np.random.RandomState(seed)
+
         algo_kwargs = {
             "random_pos_embedding": self.random_pos_embedding,
             "static_hints_as_input": self.static_hints_as_input,
@@ -102,7 +104,7 @@ class TrainerConfig:
                                                 chunk_size=self.chunk_size,
                                                 batch_size=self.batch_size,
                                                 num_batches=num_batches,
-                                                seed=seed,
+                                                seed=rng.randint(2**32),
                                                 static_batch_size=self.static_batch_size,
                                                 algo_kwargs=algo_kwargs))    
             

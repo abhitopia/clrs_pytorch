@@ -1,4 +1,5 @@
 # Next set of fixes
+- [x] Fix data seeding (follow original code)
 - [ ] Fix evaluation
     - [x] Skip scalar evaluation
     - [x] Separate evaluation for hints and scalars

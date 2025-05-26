@@ -80,7 +80,6 @@ def train_epoch(dataloader, model, head_opts, shared_opt, train_state,
                     loss_val = sum(tree_flatten(loss_dict))
                     loss_val.backward()
                     losses.append(loss_val)
-                    train_state[algo] = new_state
 
                 # update progress bar for this head
                 pbar.set_postfix(algo=algo)
@@ -131,7 +130,6 @@ def train_epoch(dataloader, model, head_opts, shared_opt, train_state,
                 head_opt.step(); head_opt.zero_grad()
                 shared_opt.step(); shared_opt.zero_grad()
 
-                train_state[algo] = new_state
 
                 # update and log
                 step += 1
@@ -150,7 +148,9 @@ def train_epoch(dataloader, model, head_opts, shared_opt, train_state,
 if __name__ == "__main__":
     mode = "sync"
     use_streams = False
-    cfg = TrainerConfig()
+    stacked = False
+    compile = False
+    cfg = TrainerConfig(train_steps=10)
     train_dl = cfg.get_dataloader(Split.TRAIN)
     model    = cfg.get_model(train_dl.dataset.specs)
     device   = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -172,10 +172,8 @@ if __name__ == "__main__":
         sync=(mode=="sync"),
         use_streams=False
     )
-    print(f"\n{mode.upper()} — {bps:.1f} batches/sec")
 
-    for epoch in range(cfg.num_epochs):
-        model.train()
-        train_loss = 0.0
-        train_acc = 0.0
-        train_steps = 0
+    if cfg.stacked:
+        bps = bps * len(cfg.algorithms)
+
+    print(f"\nMode: {mode}, UseStreams: {use_streams}, Stacked: {cfg.stacked} , Compile: {cfg.compile}, algo batches/sec")

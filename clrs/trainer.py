@@ -91,7 +91,7 @@ class TrainerConfig:
     def get_dataloader(self, split: Split, num_workers: int = 0):
         algo_datasets = []
         
-        if split == Split.Train:
+        if split == Split.TRAIN:
             seed = self.seed
             num_batches = self.train_batches
             sizes = self.sizes

@@ -440,9 +440,11 @@ def train(config: TrainerConfig,
 
     if compile and not eval_only:
         print("Compiling model using torch.compile...")
+        model.static_loop_unroll = True  # When compiling, it's important to keep fixed loop unroll
         model.compile(submodules=not config.stacked)
     else:
-        print("Model compilation disabled; skipping torch.compile.")
+        model.static_loop_unroll = False  # When not compiling, it's more efficient to have dynamic loop unroll
+        print("Model compilation disabled; skipping torch.compile but using dynamic loop unroll.")
     
     if torch.cuda.is_available():
         torch.set_float32_matmul_precision('high')

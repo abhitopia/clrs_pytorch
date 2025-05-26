@@ -930,12 +930,14 @@ class AlgoModel(torch.nn.Module):
                  hint_reconst_mode: ReconstMode = ReconstMode.HARD,
                  hint_teacher_forcing: float = 1.0,
                  skip_scalar_eval: bool = True,
+                 static_loop_unroll: bool = True,
                  dropout: float = 0.0): 
         super().__init__()
         self.hidden_dim = hidden_dim
         self.encode_hints = encode_hints
         self.decode_hints = decode_hints
         self.spec = spec
+        self.static_loop_unroll = static_loop_unroll
         self.hint_teacher_forcing = hint_teacher_forcing
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
         self.encoder = AlgoEncoder(spec, hidden_dim, encode_hints)
@@ -1081,8 +1083,7 @@ class AlgoModel(torch.nn.Module):
         return raw_prediction, prediction, nxt_model_state
     
     
-    def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, model_state: ModelState) -> Tuple[Trajectory, Trajectory, ModelState]:
-        max_steps = next(iter(hints.values())).shape[0]
+    def _loop(self, input: Input, hints: Hints, num_nodes: Tensor, model_state: ModelState, max_steps: int) -> Tuple[Trajectory, Trajectory, ModelState]:
          # Disable the loop as it makes the computational graph too large for torch.compile
         raw_predictions: List[Trajectory] = []
         predictions: List[Trajectory] = []
@@ -1109,13 +1110,17 @@ class AlgoModel(torch.nn.Module):
     def forward(self, feature: Feature, model_state: Optional[ModelState] = None) -> Tuple[Tuple[Trajectory, Trajectory, Trajectory], ModelState]:
         trajectory, num_steps, num_nodes = feature[0], feature[1], feature[2]
         input, hints, output = trajectory[Stage.INPUT], trajectory[Stage.HINT], trajectory[Stage.OUTPUT]
-        max_steps = next(iter(hints.values())).shape[0]
+        if self.static_loop_unroll:
+            max_steps = next(iter(hints.values())).shape[0]
+        else:
+            max_steps = num_steps.max().item()
 
         prev_model_state = self.init_model_state(feature) if model_state is None else model_state
         raw_predictions, predictions, nxt_model_state = self._loop(input=input, 
                                                                     hints=hints, 
                                                                     num_nodes=num_nodes, 
-                                                                    model_state=prev_model_state)   
+                                                                    model_state=prev_model_state,
+                                                                    max_steps=max_steps)   
         target: Trajectory = {
             Stage.OUTPUT: output,
             # first target hint is never predicted
@@ -1155,9 +1160,11 @@ class Model(torch.nn.Module):
                  hint_reconst_mode: ReconstMode = ReconstMode.SOFT,
                  hint_teacher_forcing: float = 0.0,
                  skip_scalar_eval: bool = True,
+                 static_loop_unroll: bool = True,
                  dropout: float = 0.0):
         super().__init__()
         self.models = nn.ModuleDict()
+        self.static_loop_unroll = static_loop_unroll
         self.specs = specs
 
         for algo_name, spec in specs.items():
@@ -1170,6 +1177,7 @@ class Model(torch.nn.Module):
                                                             hint_reconst_mode=hint_reconst_mode, 
                                                             hint_teacher_forcing=hint_teacher_forcing, 
                                                             skip_scalar_eval=skip_scalar_eval,
+                                                            static_loop_unroll=static_loop_unroll,
                                                             dropout=dropout))
             
     def compile(self, submodules=False):

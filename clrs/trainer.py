@@ -441,7 +441,7 @@ def train(config: TrainerConfig,
     if compile and not eval_only:
         print("Compiling model using torch.compile...")
         model.static_loop_unroll = True  # When compiling, it's important to keep fixed loop unroll
-        model.compile(submodules=not config.stacked)
+        model.compile(submodules=True)  # Found that submodules=True is more efficient than submodules=False even for stacked training
     else:
         model.static_loop_unroll = False  # When not compiling, it's more efficient to have dynamic loop unroll
         print("Model compilation disabled; skipping torch.compile but using dynamic loop unroll.")

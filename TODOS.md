@@ -7,8 +7,14 @@
     - [x] Test Bellman Ford 
     - [x] Add the test evaluation
     - [ ] Ensure per batch element accuracy calculation 
-- [ ] Implement Resume
-- [ ] Implement Test/Evaluate
+
+
+# Evaluation
+- [x] Implement chunk -1 and probability
+- [x] Disable compilation for the test set
+- [ ] Check if the batch size needs to be passed to log_dict
+
+
 
 - [ ] Implement sync / async training with separate Cuda streams
 - [ ] Benchmark different training modes

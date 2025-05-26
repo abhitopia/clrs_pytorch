@@ -31,6 +31,8 @@ app = typer.Typer(
 def main(
     algos: List[Algorithm] = typer.Option(CLRS30Algorithms, "--algos", "-a", help="Algorithms to train", ),
     sizes: List[int] = typer.Option([4, 7, 11, 13, 16], "--sizes", "-s", help="Sizes to train, max value is used for validation"),
+    val_size: int = typer.Option(16, "--val-size", "-vs", help="Validation size, typically max of sizes"),
+    test_size: int = typer.Option(64, "--test-size", "-ts", help="Test size, typically 4x max of sizes"),
     batch_size: int = typer.Option(32, "--batch-size", "-b", help="Batch size"),
     num_train_batches: int = typer.Option(10000, "--num-train-batches", "-t", help="Number of training batches per algorithm"),
     num_val_batches: int = typer.Option(50, "--num-val-batches", "-v", help="Number of validation batches per algorithm"),
@@ -65,6 +67,8 @@ def main(
     config = TrainerConfig(
         algorithms=algos,
         sizes=sizes,
+        val_size=val_size,
+        test_size=test_size,
         seed=seed,
         stacked=stacked,
         batch_size=batch_size,

@@ -1,4 +1,5 @@
 from collections import defaultdict
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 import os
@@ -27,9 +28,12 @@ class Split(str, Enum):
 @dataclass
 class TrainerConfig:
     algorithms: Union[Algorithm, List[Algorithm]] = field(default_factory=lambda: CLRS30Algorithms)
-    sizes: List[int] = field(default_factory=lambda: [4, 7, 11, 13, 16])  # Training sizes, max size is used for validation
+    sizes: List[int] = field(default_factory=lambda: [4, 7, 11, 13, 16])  # Training sizes
+    val_size: int = 16                                      # Validation size, typically max of sizes
+    test_size: int = 64                                     # Test size
     train_batches: int = 10000                              # Number of total training batches per algorithm (Same as paper)
     val_batches: int = 10                                   # Number of validation batches per algorithm
+    test_batches: int = 10                                  # Number of test batches per algorithm, paper uses 32*8 samples as max
     static_batch_size: bool = True                          # If True, then the num nodes and num steps are fixed for each batch per algorithm
     stacked: bool = False                                   # Paper found non-stacked training to be better      
     chunk_size: Optional[int] = 16                          # Number of hints per batch, if <0 or None, then no chunking 
@@ -74,6 +78,9 @@ class TrainerConfig:
         if self.chunk_size is not None and self.chunk_size < 0:
             self.chunk_size = None
 
+        assert self.val_size <= max(self.sizes), "Validation size must be less than or equal to the max size"
+        assert self.test_size > max(self.sizes), "Test size is meant to test OOD generalization, so it must be greater than the max size, typically 4x the max size"
+
         self.algorithms = sorted(self.algorithms)
         if not self.stacked:
             # As per the generalise algorithmic learner paper, they train num_steps cycles
@@ -82,9 +89,24 @@ class TrainerConfig:
             self.num_train_steps = self.train_batches
 
     def get_dataloader(self, split: Split, num_workers: int = 0):
-        seed = self.seed + (1 if split == Split.VAL else 2 if split == Split.TEST else 0)
-        num_batches = self.train_batches if split == Split.TRAIN else self.val_batches
         algo_datasets = []
+        
+        if split == Split.Train:
+            seed = self.seed
+            num_batches = self.train_batches
+            sizes = self.sizes
+            chunk_size = self.chunk_size
+        elif split == Split.VAL:
+            seed = self.seed + 1
+            num_batches = self.val_batches
+            sizes = [self.val_size]
+            chunk_size = self.chunk_size
+        elif split == Split.TEST:
+            seed = self.seed + 2
+            num_batches = self.test_batches
+            sizes = [self.test_size]
+            chunk_size = None                 # Ensure each batch is a full trajectory for the test set
+
 
         rng = np.random.RandomState(seed)
 
@@ -95,12 +117,9 @@ class TrainerConfig:
         }
 
         for algorithm in self.algorithms:
-            algo_sizes = self.sizes
+            algo_sizes = sizes
+            this_algo_kwargs = deepcopy(algo_kwargs)
 
-            if split == Split.VAL:
-                algo_sizes = [max(algo_sizes)]
-            elif split == Split.TEST:
-                algo_sizes = 4 * [max(algo_sizes)]  # 4 times OOD generalization test
 
             # As per the generalise algorithmic learner paper, we replace the max length with 5/4 of the max length for 
             # string matching algorithms for training. For validation, we use the max length.
@@ -108,16 +127,25 @@ class TrainerConfig:
                 max_length = max(algo_sizes)
                 max_length = (max_length * 5) // 4
                 algo_sizes = [max_length]*len(algo_sizes)
+            elif split == Split.TEST:
+                # Default setting used to create CLRS30 dataset test set
+                if algorithm in [Algorithm.naive_string_matcher, Algorithm.kmp_matcher]:
+                    this_algo_kwargs['length_needle'] = 0 # None in original code corresponds to 0 in this codebase
+                    
+                if algorithm in [Algorithm.mst_kruskal, Algorithm.articulation_points, Algorithm.bridges]:
+                    this_algo_kwargs['p'] = [0.2] # Default in CLRS30 Test set
+                else:
+                    this_algo_kwargs['p'] = [0.5] # Default in CLRS30 Test set
 
             algo_datasets.append(AlgoFeatureDataset(
                                                 algorithm=algorithm,
                                                 sizes=algo_sizes,
-                                                chunk_size=self.chunk_size,
+                                                chunk_size=chunk_size,
                                                 batch_size=self.batch_size,
                                                 num_batches=num_batches,
                                                 seed=rng.randint(2**32),
                                                 static_batch_size=self.static_batch_size,
-                                                algo_kwargs=algo_kwargs))    
+                                                algo_kwargs=this_algo_kwargs))    
             
         dataset = StackedAlgoFeatureDataset(algo_datasets) if self.stacked else CyclicAlgoFeatureDataset(algo_datasets)
         return dataset.get_dataloader(num_workers=num_workers)
@@ -410,7 +438,7 @@ def train(config: TrainerConfig,
             print(f"Error loading checkpoint weights: {e}")
             sys.exit(1)
 
-    if compile:
+    if compile and not eval_only:
         print("Compiling model using torch.compile...")
         model.compile(submodules=not config.stacked)
     else:
@@ -489,9 +517,6 @@ def train(config: TrainerConfig,
     trainer.fit(model, 
                 train_dataloaders=train_dl, 
                 val_dataloaders=val_dl)
-    
-    test_dl = config.get_dataloader(Split.TEST, num_workers=0 if debug else 2)
-    trainer.test(model, dataloaders=test_dl)
 
 
 

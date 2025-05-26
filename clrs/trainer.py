@@ -489,6 +489,8 @@ def train(config: TrainerConfig,
     trainer.fit(model, 
                 train_dataloaders=train_dl, 
                 val_dataloaders=val_dl)
+    
+    trainer.test(model, dataloaders=test_dl)
 
 
 

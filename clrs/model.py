@@ -1175,25 +1175,27 @@ class Model(torch.nn.Module):
     def compile(self, submodules=False):
         torch._dynamo.config.cache_size_limit = 256
 
+        fullgraph = {name: True for name in self.models.keys()}
+        for name, mod in self.models.items():
+            spec = self.models[name].spec
+            if 'pred' in spec and spec['pred'][2] == Type.PERMUTATION_POINTER:
+                fullgraph[name] = False
+
         if submodules:
             for name, mod in self.models.items():
-                spec = self.models[name].spec
-                if 'pred' in spec and spec['pred'][2] == Type.PERMUTATION_POINTER:
-                    print(f"▸ disabling fullgraph for {name}…")
-                    fullgraph = False
-
-                print(f"▸ compiling {name}…  with fullgraph={fullgraph}")
+                print(f"▸ Used compiled model for {name} with fullgraph={fullgraph[name]}")
                 self.models[name] = torch.compile(
                     mod,
-                    fullgraph=fullgraph,
+                    fullgraph=fullgraph[name],
                     mode="reduce-overhead",
                     backend="inductor",
                 )
         else:
-            print("Compiling a full model")
+            fullgraph = all(fullgraph.values())
+            print(f"Compiling a single full model with fullgraph={fullgraph}")
             self = torch.compile(
                 self,
-                fullgraph=True,
+                fullgraph=fullgraph,
                 mode="reduce-overhead",
                 backend="inductor",
             )

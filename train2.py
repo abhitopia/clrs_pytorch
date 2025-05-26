@@ -146,11 +146,17 @@ def train_epoch(dataloader, model, head_opts, shared_opt, train_state,
     return step / elapsed
 
 if __name__ == "__main__":
-    mode = "sync"
-    use_streams = False
-    stacked = False
-    compile = False
-    cfg = TrainerConfig(train_batches=10, stacked=stacked)
+    mode = "async"
+    use_streams = True
+    stacked = True
+    compile = True
+
+    train_batches = 20 if stacked else 5
+
+    if mode != "sync":
+        train_batches *= 5 
+
+    cfg = TrainerConfig(train_batches=train_batches, stacked=stacked)
     train_dl = cfg.get_dataloader(Split.TRAIN)
     model    = cfg.get_model(train_dl.dataset.specs)
     device   = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -173,7 +179,7 @@ if __name__ == "__main__":
         use_streams=False
     )
 
-    if cfg.stacked:
+    if cfg.stacked and mode == "sync":
         bps = bps * len(cfg.algorithms)
 
-    print(f"\nMode: {mode}, UseStreams: {use_streams}, Stacked: {cfg.stacked} , Compile: {cfg.compile}, algo batches/sec")
+    print(f"\nMode: {mode}, UseStreams: {use_streams}, Stacked: {cfg.stacked} , Compile: {compile}, {bps} algo batches/sec")

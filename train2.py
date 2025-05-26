@@ -150,7 +150,7 @@ if __name__ == "__main__":
     use_streams = False
     stacked = False
     compile = False
-    cfg = TrainerConfig(train_steps=10)
+    cfg = TrainerConfig(train_batches=10, stacked=stacked)
     train_dl = cfg.get_dataloader(Split.TRAIN)
     model    = cfg.get_model(train_dl.dataset.specs)
     device   = torch.device("cuda" if torch.cuda.is_available() else "cpu")

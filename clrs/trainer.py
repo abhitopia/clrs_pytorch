@@ -269,7 +269,6 @@ class TrainingModel(pl.LightningModule):
         torch.compiler.cudagraph_mark_step_begin()
 
     def training_step(self, batch: DictFeatureBatch, batch_idx: int):
-        print(batch[0].keys())
         features, is_first, is_last = batch
         model_state = self.get_model_state(Split.TRAIN, is_first, features)
         (predictions, losses, evaluations), nxt_model_state = self.model(features, model_state)
@@ -414,7 +413,7 @@ def train(config: TrainerConfig,
 
     if compile:
         print("Compiling model using torch.compile...")
-        model.compile()
+        model.compile(submodules=not config.stacked)
     else:
         print("Model compilation disabled; skipping torch.compile.")
     

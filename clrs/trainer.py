@@ -325,6 +325,8 @@ class TrainingModel(pl.LightningModule):
     
     def test_step(self, batch: DictFeatureBatch, batch_idx: int):
         features, is_first, is_last = batch
+        for algo in features.keys():
+            print(f"{algo.name}:  Num Steps: {features[algo][1].max().item()} Num Nodes: {features[algo][2].max().item()} Is Last: {is_last[algo]}")
         model_state = self.get_model_state(Split.TEST, is_first, features)
         (predictions, losses, evaluations), nxt_model_state = self.model(features, model_state) 
         self.set_model_state(Split.TEST, is_last, nxt_model_state)

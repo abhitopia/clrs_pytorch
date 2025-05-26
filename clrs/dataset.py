@@ -125,15 +125,15 @@ def batch_iterator(
         max_num_nodes = max(max_num_nodes, num_nodes)
         max_num_steps = max(max_num_steps, num_steps)
 
-        if idx < warm_up:  # Warm up to compute the max_num_nodes and max_num_steps
-            continue
-
         chunk_size_now = chunk_size if chunk_size is not None else max_num_steps
         n_chunks = math.ceil(num_steps / chunk_size_now)
 
         # add to bucket
         bucket = buckets[n_chunks]
         bucket.append(feature)
+
+        if idx < warm_up:  # Warm up to compute the max_num_nodes and max_num_steps
+            continue
 
         # if we have enough to form one batch, do it
         if len(bucket) >= batch_size:

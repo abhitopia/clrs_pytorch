@@ -399,7 +399,6 @@ def train(config: TrainerConfig,
     # Dummy call to get the specs
     train_dl = config.get_dataloader(Split.TRAIN, num_workers=num_workers)
     val_dl = config.get_dataloader(Split.VAL, num_workers=0 if debug else 2)        
-    test_dl = config.get_dataloader(Split.TEST, num_workers=0 if debug else 2)
     model_specs = val_dl.dataset.specs
 
     model = config.get_model(model_specs)
@@ -480,6 +479,7 @@ def train(config: TrainerConfig,
     with trainer.init_module():
         model = TrainingModel(model, config)
         if eval_only:
+            test_dl = config.get_dataloader(Split.TEST, num_workers=0 if debug else 2)
             trainer.test(model, dataloaders=test_dl)
             return
         else:
@@ -490,6 +490,7 @@ def train(config: TrainerConfig,
                 train_dataloaders=train_dl, 
                 val_dataloaders=val_dl)
     
+    test_dl = config.get_dataloader(Split.TEST, num_workers=0 if debug else 2)
     trainer.test(model, dataloaders=test_dl)
 
 

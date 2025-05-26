@@ -31,6 +31,30 @@ def to_device(obj, device):
     return tree_map(lambda x: x.to(device) if torch.is_tensor(x) else x, obj)
 
 
+def warmup(model, train_dl, train_state, device, compile):
+
+    if compile: 
+        print("→ compiling all heads …")
+        model = model.compile()
+        batch_iter = iter(train_dl)
+
+        # warm-up pass: grab a single batch and run one forward+backward on each head
+
+        for step in range(10):
+            print(f"→ warming up compiled graphs … {step}/10")
+            features, is_first, is_last = next(batch_iter)
+            features = to_device(features, device)
+
+            train_state[algo] = model.init_model_state(algo, features[algo])
+
+            # run one dummy synchronous step
+            for algo, head in model.models.items():
+                state = train_state[algo]
+                with torch.amp.autocast(dtype=torch.bfloat16, device_type=device.type):
+                    (pred, loss_dict, evals), new_state = head(features[algo], state)
+                    loss = sum(tree_flatten(loss_dict))
+                    loss.backward()
+
 def train_epoch(dataloader, model, head_opts, shared_opt, train_state,
                 device, n_steps, sync, use_streams):
     model.to(device)
@@ -165,6 +189,8 @@ if __name__ == "__main__":
     train_state = {algo: None for algo in cfg.algorithms}
     n_steps     = cfg.num_train_steps
 
+    if compile:
+        warmup(model, train_dl, train_state, device, compile)
 
     bps = train_epoch(
         train_dl, model, head_opts, shared_opt,

@@ -1,73 +1,114 @@
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                Validate metric                 ┃                  DataLoader 0                  ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│       activity_selector/output_score_val       │               0.9037500023841858               │
-│      articulation_points/output_score_val      │              0.09090909361839294               │
-│         bellman_ford/output_score_val          │               0.9287499785423279               │
-│              bfs/output_score_val              │               0.9470312595367432               │
-│         binary_search/output_score_val         │               0.9243749976158142               │
-│            bridges/output_score_val            │               0.7752130627632141               │
-│          bubble_sort/output_score_val          │               0.9759114384651184               │
-│      dag_shortest_paths/output_score_val       │                   0.96484375                   │
-│              dfs/output_score_val              │                 0.916748046875                 │
-│           dijkstra/output_score_val            │               0.9372479915618896               │
-│ find_maximum_subarray_kadane/output_score_val  │               0.7868750095367432               │
-│        floyd_warshall/output_score_val         │               0.9356250166893005               │
-│          graham_scan/output_score_val          │                   0.94921875                   │
-│           heapsort/output_score_val            │                 0.98095703125                  │
-│        insertion_sort/output_score_val         │               0.9862499833106995               │
-│         jarvis_march/output_score_val          │               0.8374999761581421               │
-│          kmp_matcher/output_score_val          │               0.8805555701255798               │
-│          lcs_length/output_score_val           │               0.8953906297683716               │
-│      matrix_chain_order/output_score_val       │               0.9960156083106995               │
-│            minimum/output_score_val            │               0.8762500286102295               │
-│          mst_kruskal/output_score_val          │                      0.0                       │
-│           mst_prim/output_score_val            │                  0.927734375                   │
-│     naive_string_matcher/output_score_val      │               0.871874988079071                │
-│          optimal_bst/output_score_val          │                   0.98828125                   │
-│          quickselect/output_score_val          │                     0.5625                     │
-│           quicksort/output_score_val           │               0.9737215638160706               │
-│      segments_intersect/output_score_val       │               0.8354687690734863               │
-│ strongly_connected_components/output_score_val │                  0.9462890625                  │
-│        task_scheduling/output_score_val        │               0.9560937285423279               │
-│       topological_sort/output_score_val        │                0.5177001953125                 │
-│             total/output_score_val             │               0.8701352477073669               │
-└────────────────────────────────────────────────┴────────────────────────────────────────────────┘
 
+Test: batch=32, chunk=16, length=64
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                   Test metric                   ┃                  DataLoader 0                   ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│       activity_selector/output_score_test       │               0.7906249761581421                │
+│      articulation_points/output_score_test      │                       0.0                       │
+│         bellman_ford/output_score_test          │                   0.97265625                    │
+│              bfs/output_score_test              │                    0.9765625                    │
+│         binary_search/output_score_test         │                0.590624988079071                │
+│            bridges/output_score_test            │              0.014691161923110485               │
+│          bubble_sort/output_score_test          │                   0.98046875                    │
+│      dag_shortest_paths/output_score_test       │                0.985546886920929                │
+│              dfs/output_score_test              │                   0.97265625                    │
+│           dijkstra/output_score_test            │                   0.97265625                    │
+│ find_maximum_subarray_kadane/output_score_test  │               0.20624999701976776               │
+│        floyd_warshall/output_score_test         │                     0.96875                     │
+│          graham_scan/output_score_test          │               0.7152343988418579                │
+│           heapsort/output_score_test            │                   0.97265625                    │
+│        insertion_sort/output_score_test         │                    0.9765625                    │
+│         jarvis_march/output_score_test          │               0.7515624761581421                │
+│          kmp_matcher/output_score_test          │               0.15000000596046448               │
+│          lcs_length/output_score_test           │                   0.853515625                   │
+│      matrix_chain_order/output_score_test       │                    0.9921875                    │
+│            minimum/output_score_test            │               0.3499999940395355                │
+│          mst_kruskal/output_score_test          │                       0.0                       │
+│           mst_prim/output_score_test            │                     0.96875                     │
+│     naive_string_matcher/output_score_test      │               0.06875000149011612               │
+│          optimal_bst/output_score_test          │                    0.9921875                    │
+│          quickselect/output_score_test          │              0.0062500000931322575              │
+│           quicksort/output_score_test           │               0.9781249761581421                │
+│      segments_intersect/output_score_test       │                0.813671886920929                │
+│ strongly_connected_components/output_score_test │                    0.9765625                    │
+│        task_scheduling/output_score_test        │                0.842968761920929                │
+│       topological_sort/output_score_test        │               0.49687498807907104               │
+│             total/output_score_test             │               0.6779115796089172                │
+└─────────────────────────────────────────────────┴─────────────────────────────────────────────────┘
+
+
+Test: batch=64, chunk=16, length=64
 
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                   Test metric                   ┃                  DataLoader 0                   ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│       activity_selector/output_score_test       │               0.9098437428474426                │
-│      articulation_points/output_score_test      │               0.09090909361839294               │
-│         bellman_ford/output_score_test          │               0.9287499785423279                │
-│              bfs/output_score_test              │               0.9474999904632568                │
-│         binary_search/output_score_test         │                0.909375011920929                │
-│            bridges/output_score_test            │               0.8350496888160706                │
-│          bubble_sort/output_score_test          │               0.9733073115348816                │
-│      dag_shortest_paths/output_score_test       │               0.9649739861488342                │
-│              dfs/output_score_test              │                  0.9150390625                   │
-│           dijkstra/output_score_test            │                 0.936767578125                  │
-│ find_maximum_subarray_kadane/output_score_test  │               0.7818750143051147                │
-│        floyd_warshall/output_score_test         │               0.9364062547683716                │
-│          graham_scan/output_score_test          │               0.9551562666893005                │
-│           heapsort/output_score_test            │                  0.98193359375                  │
-│        insertion_sort/output_score_test         │               0.9871875047683716                │
-│         jarvis_march/output_score_test          │                0.844531238079071                │
-│          kmp_matcher/output_score_test          │                0.862500011920929                │
-│          lcs_length/output_score_test           │                   0.896484375                   │
-│      matrix_chain_order/output_score_test       │               0.9959375262260437                │
-│            minimum/output_score_test            │               0.8731250166893005                │
+│       activity_selector/output_score_test       │                0.821484386920929                │
+│      articulation_points/output_score_test      │                       0.0                       │
+│         bellman_ford/output_score_test          │                   0.97265625                    │
+│              bfs/output_score_test              │                    0.9765625                    │
+│         binary_search/output_score_test         │               0.44999998807907104               │
+│            bridges/output_score_test            │              0.0005847931024618447              │
+│          bubble_sort/output_score_test          │               0.9800781011581421                │
+│      dag_shortest_paths/output_score_test       │               0.9859374761581421                │
+│              dfs/output_score_test              │                     0.96875                     │
+│           dijkstra/output_score_test            │                   0.97265625                    │
+│ find_maximum_subarray_kadane/output_score_test  │               0.20781250298023224               │
+│        floyd_warshall/output_score_test         │                     0.96875                     │
+│          graham_scan/output_score_test          │               0.8363281488418579                │
+│           heapsort/output_score_test            │                   0.97265625                    │
+│        insertion_sort/output_score_test         │                   0.97265625                    │
+│         jarvis_march/output_score_test          │                0.583203136920929                │
+│          kmp_matcher/output_score_test          │               0.11406250298023224               │
+│          lcs_length/output_score_test           │                   0.84765625                    │
+│      matrix_chain_order/output_score_test       │                    0.9921875                    │
+│            minimum/output_score_test            │               0.40156251192092896               │
 │          mst_kruskal/output_score_test          │                       0.0                       │
-│           mst_prim/output_score_test            │                0.925025224685669                │
-│     naive_string_matcher/output_score_test      │               0.8650000095367432                │
-│          optimal_bst/output_score_test          │                   0.98828125                    │
-│          quickselect/output_score_test          │                0.564338207244873                │
-│           quicksort/output_score_test           │               0.9737215638160706                │
-│      segments_intersect/output_score_test       │               0.8225781321525574                │
-│ strongly_connected_components/output_score_test │                   0.947265625                   │
-│        task_scheduling/output_score_test        │               0.9514062404632568                │
-│       topological_sort/output_score_test        │                 0.5362548828125                 │
-│             total/output_score_test             │               0.8663944005966187                │
+│           mst_prim/output_score_test            │                     0.96875                     │
+│     naive_string_matcher/output_score_test      │               0.06562499701976776               │
+│          optimal_bst/output_score_test          │                    0.9921875                    │
+│          quickselect/output_score_test          │               0.07656250149011612               │
+│           quicksort/output_score_test           │                    0.9765625                    │
+│      segments_intersect/output_score_test       │                0.821093738079071                │
+│ strongly_connected_components/output_score_test │                    0.9765625                    │
+│        task_scheduling/output_score_test        │                   0.822265625                   │
+│       topological_sort/output_score_test        │                    0.484375                     │
+│             total/output_score_test             │               0.6736522912979126                │
 └─────────────────────────────────────────────────┴─────────────────────────────────────────────────┘
-Testing ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1500/1500 0:04:29 • 0:00:00 6.19it/s  
+
+Test: batch=16, chunk=16, length=64 (Stacked)
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                   Test metric                   ┃                  DataLoader 0                   ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│       activity_selector/output_score_test       │               0.8812500238418579                │
+│      articulation_points/output_score_test      │                       0.0                       │
+│         bellman_ford/output_score_test          │                   0.97265625                    │
+│              bfs/output_score_test              │                    0.9765625                    │
+│         binary_search/output_score_test         │               0.6468750238418579                │
+│            bridges/output_score_test            │               0.03709716722369194               │
+│          bubble_sort/output_score_test          │               0.9769531488418579                │
+│      dag_shortest_paths/output_score_test       │                0.985546886920929                │
+│              dfs/output_score_test              │                   0.97265625                    │
+│           dijkstra/output_score_test            │                   0.97265625                    │
+│ find_maximum_subarray_kadane/output_score_test  │               0.2562499940395355                │
+│        floyd_warshall/output_score_test         │                   0.97265625                    │
+│          graham_scan/output_score_test          │                0.567187488079071                │
+│           heapsort/output_score_test            │                   0.97265625                    │
+│        insertion_sort/output_score_test         │                   0.97265625                    │
+│         jarvis_march/output_score_test          │                0.862109363079071                │
+│          kmp_matcher/output_score_test          │                    0.171875                     │
+│          lcs_length/output_score_test           │                0.858593761920929                │
+│      matrix_chain_order/output_score_test       │                    0.9921875                    │
+│            minimum/output_score_test            │               0.3968749940395355                │
+│          mst_kruskal/output_score_test          │                       0.0                       │
+│           mst_prim/output_score_test            │                     0.96875                     │
+│     naive_string_matcher/output_score_test      │               0.13750000298023224               │
+│          optimal_bst/output_score_test          │                    0.9921875                    │
+│          quickselect/output_score_test          │                     0.03125                     │
+│           quicksort/output_score_test           │                   0.97265625                    │
+│      segments_intersect/output_score_test       │               0.8433593511581421                │
+│ strongly_connected_components/output_score_test │                    0.9765625                    │
+│        task_scheduling/output_score_test        │                0.840624988079071                │
+│       topological_sort/output_score_test        │                    0.484375                     │
+│             total/output_score_test             │               0.6697872281074524                │
+└─────────────────────────────────────────────────┴─────────────────────────────────────────────────┘

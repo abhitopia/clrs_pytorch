@@ -31,17 +31,6 @@ def to_device(obj, device):
     return tree_map(lambda x: x.to(device) if torch.is_tensor(x) else x, obj)
 
 
-def compute_loss(loss_dict):
-    total = 0.0
-    for stage_losses in loss_dict.values():
-        flat = tree_flatten(stage_losses)
-        for x in flat:
-            total += x.sum().item() if torch.is_tensor(x) else float(x)
-    return total
-
-
-
-
 def train_epoch(dataloader, model, head_opts, shared_opt, train_state,
                 device, n_steps, sync, use_streams):
     model.to(device)
@@ -86,9 +75,9 @@ def train_epoch(dataloader, model, head_opts, shared_opt, train_state,
                 head = model.models[algo]
                 head_opt = head_opts[algo]
                 with torch.cuda.stream(stream) if stream else nullcontext(), \
-                     torch.amp.autocast(dtype=torch.bfloat16):
+                     torch.amp.autocast(dtype=torch.bfloat16, device_type=device.type):
                     (pred, loss_dict, evals), new_state = head(features[algo], train_state[algo])
-                    loss_val = compute_loss(loss_dict)
+                    loss_val = sum(tree_flatten(loss_dict))
                     loss_val.backward()
                     losses.append(loss_val)
                     train_state[algo] = new_state
@@ -125,9 +114,9 @@ def train_epoch(dataloader, model, head_opts, shared_opt, train_state,
                 head = model.models[algo]
                 head_opt = head_opts[algo]
                 with torch.cuda.stream(stream) if stream else nullcontext(), \
-                     torch.amp.autocast(dtype=torch.bfloat16):
+                     torch.amp.autocast(dtype=torch.bfloat16, device_type=device.type):
                     (pred, loss_dict, evals), new_state = head(features[algo], train_state[algo])
-                    loss_val = compute_loss(loss_dict)
+                    loss_val = sum(tree_flatten(loss_dict))
                     loss_val.backward()
                     evt = torch.cuda.Event() if stream else None
                     if evt: evt.record(stream)

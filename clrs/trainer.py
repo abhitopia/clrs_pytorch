@@ -33,7 +33,7 @@ class TrainerConfig:
     test_size: int = 64                                     # Test size
     train_batches: int = 10000                              # Number of total training batches per algorithm (Same as paper)
     val_batches: int = 10                                   # Number of validation batches per algorithm
-    test_batches: int = 10                                  # Number of test batches per algorithm, paper uses 32*8 samples as max
+    test_batches: int = 10                                  # Number of test batches per algorithm, paper uses 32*64 samples as max for some algorithms
     static_batch_size: bool = True                          # If True, then the num nodes and num steps are fixed for each batch per algorithm
     stacked: bool = False                                   # Paper found non-stacked training to be better      
     chunk_size: Optional[int] = 16                          # Number of hints per batch, if <0 or None, then no chunking 
@@ -96,17 +96,19 @@ class TrainerConfig:
             num_batches = self.train_batches
             sizes = self.sizes
             chunk_size = self.chunk_size
+            warm_up_discard = 1000
         elif split == Split.VAL:
             seed = self.seed + 1
             num_batches = self.val_batches
             sizes = [self.val_size]
             chunk_size = self.chunk_size
+            warm_up_discard = 1000
         elif split == Split.TEST:
             seed = self.seed + 2
             num_batches = self.test_batches
             sizes = [self.test_size]
             chunk_size = None                 # Ensure each batch is a full trajectory for the test set
-
+            warm_up_discard = 0
 
         rng = np.random.RandomState(seed)
 
@@ -119,7 +121,6 @@ class TrainerConfig:
         for algorithm in self.algorithms:
             algo_sizes = sizes
             this_algo_kwargs = deepcopy(algo_kwargs)
-
 
             # As per the generalise algorithmic learner paper, we replace the max length with 5/4 of the max length for 
             # string matching algorithms for training. For validation, we use the max length.
@@ -145,6 +146,7 @@ class TrainerConfig:
                                                 num_batches=num_batches,
                                                 seed=rng.randint(2**32),
                                                 static_batch_size=self.static_batch_size,
+                                                num_warm_up_discard=warm_up_discard,
                                                 algo_kwargs=this_algo_kwargs))    
             
         dataset = StackedAlgoFeatureDataset(algo_datasets) if self.stacked else CyclicAlgoFeatureDataset(algo_datasets)
@@ -411,7 +413,6 @@ def train(config: TrainerConfig,
           compile: bool = False,
           eval_only: bool = False) -> None:
 
-    num_workers = 0 if debug else min(os.cpu_count() - 2, 8)
     project_name = project_name + "_debug" if debug else project_name
     state_dict = None
 
@@ -427,8 +428,8 @@ def train(config: TrainerConfig,
     pl.seed_everything(config.seed)
 
     # Dummy call to get the specs
-    train_dl = config.get_dataloader(Split.TRAIN, num_workers=num_workers)
-    val_dl = config.get_dataloader(Split.VAL, num_workers=0 if debug else 2)        
+    train_dl = config.get_dataloader(Split.TRAIN, num_workers=0 if debug else min(os.cpu_count() - 2, 8))
+    val_dl = config.get_dataloader(Split.VAL, num_workers=0 if debug else 2)
     model_specs = val_dl.dataset.specs
 
     model = config.get_model(model_specs)

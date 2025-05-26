@@ -91,9 +91,10 @@ def collate_features(spec: Spec, features: List[Feature], min_hint_steps: int = 
     return batch_feature
 
 def combined_algorithm_sampler(algorithm: Algorithm, sizes: List[int], seed: int, algo_kwargs: Dict):
+    rng = np.random.RandomState(seed)
     samplers = []
     for idx, size in enumerate(sizes):
-        sampler = AlgorithmSampler(algorithm, length=size, seed=seed+idx, **algo_kwargs)
+        sampler = AlgorithmSampler(algorithm, length=size, seed=rng.randint(2**32), **algo_kwargs)
         samplers.append(sampler)
 
     def _fn():
@@ -125,15 +126,15 @@ def batch_iterator(
         max_num_nodes = max(max_num_nodes, num_nodes)
         max_num_steps = max(max_num_steps, num_steps)
 
+        if idx < warm_up:  # Warm up to compute the max_num_nodes and max_num_steps
+            continue
+
         chunk_size_now = chunk_size if chunk_size is not None else max_num_steps
         n_chunks = math.ceil(num_steps / chunk_size_now)
 
         # add to bucket
         bucket = buckets[n_chunks]
         bucket.append(feature)
-
-        if idx < warm_up:  # Warm up to compute the max_num_nodes and max_num_steps
-            continue
 
         # if we have enough to form one batch, do it
         if len(bucket) >= batch_size:
@@ -194,6 +195,7 @@ class AlgoFeatureDataset(Dataset):
                 batch_size: int = 32,
                 num_batches: int = 1000,
                 static_batch_size: bool = True,
+                num_warm_up_discard: int = 1000,
                 algo_kwargs: Dict = {}):
         super().__init__()
         assert isinstance(algorithm, Algorithm), "algo must be an AlgorithmEnum"
@@ -207,6 +209,7 @@ class AlgoFeatureDataset(Dataset):
         self.batch_size = batch_size
         self.sizes = sorted(sizes)
         self.seed = seed
+        self.warm_up = num_warm_up_discard
         self.chunk_size = chunk_size
 
         # This is a hack to get the spec. We should not need to do this.
@@ -231,7 +234,7 @@ class AlgoFeatureDataset(Dataset):
             batch_size=self.batch_size, 
             static_batch_size=self.static_batch_size,
             sampler=combined_sampler,
-            warm_up=1000)
+            warm_up=self.warm_up)
 
 
     def __getitem__(self, idx: int) -> FeatureBatch:
@@ -257,13 +260,13 @@ class AlgoFeatureDataset(Dataset):
     def __len__(self):
         return self.num_batches
     
-    def get_dataloader(self, num_workers: int = 0):
+    def get_dataloader(self, num_workers: int = 0, prefetch_factor: int = 4):
         return DataLoader(self, 
                           shuffle=False,
                           batch_size=None,
                           collate_fn=_collate_fn,
                           persistent_workers=num_workers > 0,
-                          prefetch_factor=4 if num_workers > 0 else None,
+                          prefetch_factor=prefetch_factor if num_workers > 0 else None,
                           num_workers=num_workers)
     
 
@@ -295,13 +298,13 @@ class CyclicAlgoFeatureDataset(Dataset):
     def __len__(self):
         return len(self.datasets[0]) * len(self.datasets)
     
-    def get_dataloader(self, num_workers: int = 0):
+    def get_dataloader(self, num_workers: int = 0, prefetch_factor: int = 4):
         return DataLoader(self, 
                           shuffle=False,
                           batch_size=None,
                           collate_fn=_collate_fn,
                           persistent_workers=num_workers > 0,
-                          prefetch_factor=4 if num_workers > 0 else None,
+                          prefetch_factor=prefetch_factor if num_workers > 0 else None,
                           num_workers=num_workers)
     
 
@@ -329,13 +332,13 @@ class StackedAlgoFeatureDataset(Dataset):
     def __len__(self):
         return self._num_batches
     
-    def get_dataloader(self, num_workers: int = 0):
+    def get_dataloader(self, num_workers: int = 0, prefetch_factor: int = 4):
         return DataLoader(self, 
                           shuffle=False,
                           batch_size=None,
                           collate_fn=_collate_fn,
                           persistent_workers=num_workers > 0,
-                          prefetch_factor=4 if num_workers > 0 else None,
+                          prefetch_factor=prefetch_factor if num_workers > 0 else None,
                           num_workers=num_workers)
 
 

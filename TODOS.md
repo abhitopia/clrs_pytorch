@@ -3,9 +3,10 @@
 - [ ] Fix evaluation
     - [x] Skip scalar evaluation
     - [x] Separate evaluation for hints and scalars
+    - [x] Ensure that the metrics are logged correctly
+    - [x] Test Bellman Ford 
+    - [x] Add the test evaluation
     - [ ] Ensure per batch element accuracy calculation 
-    - [ ] Ensure that the metrics are logged correctly
-    - [ ] Test Bellman Ford 
 - [ ] Implement Resume
 - [ ] Implement Test/Evaluate
 

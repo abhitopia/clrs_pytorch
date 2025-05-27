@@ -437,6 +437,11 @@ def train(config: TrainerConfig,
     if state_dict is not None:
         try:
             model.load_state_dict(state_dict, strict=True)
+            # processor = next(iter(model.models.values())).processor
+            # path = Path(checkpoint_dir) / ckpt_path / "processor.pth"
+            # path.parent.mkdir(parents=True, exist_ok=True)
+            # torch.save(processor.state_dict(), path)
+            # sys.exit(0)
         except Exception as e:
             print(f"Error loading checkpoint weights: {e}")
             sys.exit(1)

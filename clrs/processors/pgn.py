@@ -230,7 +230,7 @@ class PGN(ProcessorBase):
                 mask = graph_features.adj_mat == 0 # [B, N, N, 1]
                 if num_nodes is not None:
                     mask = mask | ~edge_mask  
-                fill_value = float('-inf') if self.reduction == Reduction.MAX else float('inf')
+                fill_value = NEG_INF if self.reduction == Reduction.MAX else POS_INF
                 msgs = msgs.masked_fill(mask.unsqueeze(-1), fill_value) # [B, N, N, M]
                 msgs = msgs.max(dim=1)[0] if self.reduction == Reduction.MAX else msgs.min(dim=1)[0]# [B, N, M]
             else:
